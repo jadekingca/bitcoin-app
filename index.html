@@ -1,0 +1,1186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bitcoin Power Law Workbench</title>
+  <style>
+    :root {
+      --bg: #0b0d10;
+      --panel: #14171c;
+      --panel-2: #1b2027;
+      --ink: #edf2f7;
+      --muted: #98a2b3;
+      --line: #303846;
+      --gold: #f6b73c;
+      --blue: #4aa8ff;
+      --green: #47d18c;
+      --orange: #ff9b45;
+      --red: #ff5a68;
+      --violet: #b487ff;
+      --shadow: rgba(0, 0, 0, 0.35);
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(246, 183, 60, 0.12), transparent 32rem),
+        linear-gradient(135deg, #090b0f 0%, #10141a 55%, #0b0d10 100%);
+      color: var(--ink);
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    .app {
+      width: min(1560px, 100%);
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) auto;
+      gap: 18px;
+      align-items: end;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0 0 5px;
+      font-size: clamp(1.65rem, 3vw, 3rem);
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      max-width: 850px;
+      line-height: 1.48;
+    }
+
+    .status {
+      justify-self: end;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(20, 23, 28, 0.88);
+      color: var(--muted);
+      min-width: 220px;
+      justify-content: center;
+      box-shadow: 0 16px 42px var(--shadow);
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 99px;
+      background: var(--orange);
+      box-shadow: 0 0 18px currentColor;
+    }
+
+    .dot.live {
+      background: var(--green);
+    }
+
+    .dot.error {
+      background: var(--red);
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .metric {
+      background: rgba(20, 23, 28, 0.9);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px 14px;
+      min-height: 86px;
+      box-shadow: 0 16px 42px var(--shadow);
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 7px;
+    }
+
+    .metric strong {
+      display: block;
+      font-size: clamp(1.25rem, 2.2vw, 2rem);
+      line-height: 1.05;
+      white-space: nowrap;
+    }
+
+    .metric em {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-style: normal;
+      font-size: 0.88rem;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .chart-shell,
+    aside {
+      background: rgba(20, 23, 28, 0.94);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 16px 42px var(--shadow);
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .legend {
+      display: flex;
+      gap: 11px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .swatch {
+      width: 18px;
+      height: 3px;
+      border-radius: 3px;
+      background: currentColor;
+    }
+
+    .segmented {
+      display: inline-grid;
+      grid-auto-flow: column;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--panel-2);
+    }
+
+    .segmented button {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      padding: 8px 10px;
+      cursor: pointer;
+    }
+
+    .segmented button.active {
+      background: var(--gold);
+      color: #1d1504;
+      font-weight: 700;
+    }
+
+    .canvas-wrap {
+      position: relative;
+      height: min(68vh, 720px);
+      min-height: 500px;
+      padding: 0;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border-radius: 0 0 8px 8px;
+    }
+
+    .tooltip {
+      position: absolute;
+      pointer-events: none;
+      transform: translate(12px, 12px);
+      min-width: 210px;
+      max-width: 280px;
+      background: rgba(9, 11, 15, 0.94);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      padding: 10px;
+      color: var(--ink);
+      font-size: 0.86rem;
+      line-height: 1.4;
+      opacity: 0;
+      transition: opacity 120ms ease;
+      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
+      z-index: 4;
+    }
+
+    .tooltip.visible {
+      opacity: 1;
+    }
+
+    aside {
+      padding: 14px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+      letter-spacing: 0;
+    }
+
+    .control {
+      display: grid;
+      grid-template-columns: 1fr 92px;
+      gap: 10px;
+      align-items: center;
+      margin: 10px 0;
+    }
+
+    .control label {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .control input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0e1116;
+      color: var(--ink);
+      padding: 8px 9px;
+    }
+
+    input[type="range"] {
+      accent-color: var(--gold);
+    }
+
+    .toggle {
+      display: flex;
+      gap: 9px;
+      align-items: center;
+      color: var(--muted);
+      margin: 10px 0;
+    }
+
+    .toggle input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--gold);
+    }
+
+    .projection {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 56px 1fr;
+      gap: 10px;
+      padding: 9px 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .row:first-child {
+      border-top: 0;
+    }
+
+    .row b {
+      color: var(--gold);
+      font-weight: 760;
+    }
+
+    .row span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.86rem;
+      margin-top: 2px;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 0.86rem;
+      line-height: 1.46;
+      margin: 0;
+    }
+
+    .note a {
+      color: #9bcaff;
+    }
+
+    .audit {
+      border: 1px solid rgba(246, 183, 60, 0.24);
+      border-radius: 8px;
+      background: rgba(246, 183, 60, 0.08);
+      padding: 10px;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }
+
+    .audit strong {
+      color: var(--ink);
+    }
+
+    .zone-deep { color: var(--blue); }
+    .zone-value { color: var(--green); }
+    .zone-hot { color: var(--orange); }
+    .zone-over { color: var(--red); }
+    .zone-mania { color: var(--red); }
+    .zone-cycle { color: var(--violet); }
+    .zone-fair { color: var(--gold); }
+
+    @media (max-width: 1050px) {
+      header,
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .status {
+        justify-self: start;
+      }
+
+      aside {
+        grid-template-columns: repeat(2, minmax(260px, 1fr));
+      }
+    }
+
+    @media (max-width: 720px) {
+      .app {
+        padding: 12px;
+      }
+
+      .metrics,
+      aside {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar {
+        grid-template-columns: 1fr;
+      }
+
+      .segmented {
+        width: 100%;
+      }
+
+      .segmented button {
+        padding-inline: 6px;
+      }
+
+      .canvas-wrap {
+        min-height: 430px;
+        height: 62vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <h1>Bitcoin Power Law Workbench</h1>
+        <p class="subtitle">A log-log regression chart inspired by Bitcoin Power Law Bands and Santostasi/Porkopolis fair-value models. Values are model estimates, not financial advice.</p>
+      </div>
+      <div class="status" id="status"><span class="dot" id="statusDot"></span><span id="statusText">Loading market data</span></div>
+    </header>
+
+    <section class="metrics" aria-label="Model snapshot">
+      <div class="metric"><span>BTC price</span><strong id="spotPrice">--</strong><em id="spotDate">Awaiting data</em></div>
+      <div class="metric"><span>Model fair value</span><strong id="fairValue">--</strong><em id="fairModel">Porkopolis coefficients</em></div>
+      <div class="metric"><span>Deviation</span><strong id="deviation">--</strong><em id="zoneLabel">Classifying zone</em></div>
+      <div class="metric"><span>Oscillator</span><strong id="oscillator">--</strong><em>Floor to mania corridor</em></div>
+    </section>
+
+    <section class="workspace">
+      <div class="chart-shell">
+        <div class="toolbar">
+          <div class="legend">
+            <span class="zone-deep"><i class="swatch"></i>Deep value</span>
+            <span class="zone-value"><i class="swatch"></i>Value</span>
+            <span class="zone-fair"><i class="swatch"></i>Fair value</span>
+            <span class="zone-hot"><i class="swatch"></i>Hot</span>
+            <span class="zone-over"><i class="swatch"></i>Overheated</span>
+            <span class="zone-cycle"><i class="swatch"></i>Mania</span>
+            <span style="color:#f5f7fb"><i class="swatch"></i>BTC close</span>
+          </div>
+          <div class="segmented" aria-label="Chart horizon">
+            <button class="active" data-horizon="2036">2036</button>
+            <button data-horizon="2040">2040</button>
+            <button data-horizon="2045">2045</button>
+          </div>
+        </div>
+        <div class="canvas-wrap" id="canvasWrap">
+          <canvas id="chart" aria-label="Bitcoin power law chart"></canvas>
+          <div class="tooltip" id="tooltip"></div>
+        </div>
+      </div>
+
+      <aside>
+        <section class="panel">
+          <h2>Model</h2>
+          <div class="control">
+            <label for="coefA">Coefficient a</label>
+            <input id="coefA" type="number" value="1.6e-17" step="1e-18">
+          </div>
+          <div class="control">
+            <label for="coefB">Exponent b</label>
+            <input id="coefB" type="number" value="5.77" step="0.01">
+          </div>
+          <div class="control">
+            <label for="floorMult">Floor multiple</label>
+            <input id="floorMult" type="number" value="0.42" min="0.05" max="1" step="0.01">
+          </div>
+          <div class="control">
+            <label for="upperMult">Upper multiple</label>
+            <input id="upperMult" type="number" value="3" min="2.1" max="10" step="0.1">
+          </div>
+          <label class="toggle"><input id="showBands" type="checkbox" checked> Show valuation bands</label>
+          <label class="toggle"><input id="showHistory" type="checkbox" checked> Show historical BTC close</label>
+        </section>
+
+        <section class="panel">
+          <h2>Projection</h2>
+          <div class="projection" id="projection"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Data Audit</h2>
+          <div class="audit" id="auditBox">Checking market data source...</div>
+        </section>
+
+        <section class="panel">
+          <h2>Sources</h2>
+          <p class="note">The referenced TradingView script describes a log10 regression corridor with deep value, value, hot, and mania zones. Historical daily closes are cached locally in this browser; live spot quote is fetched separately for the current metric.</p>
+          <p class="note">References: <a href="https://www.tradingview.com/script/UdkfiWmJ/" target="_blank" rel="noreferrer">TradingView script</a>, <a href="https://www.forbes.com/sites/digital-assets/2024/12/06/the-logic-behind-bitcoins-power-law/" target="_blank" rel="noreferrer">Forbes overview</a>, <a href="https://coincodex.com/crypto/bitcoin/historical-data/" target="_blank" rel="noreferrer">CoinCodex historical prices</a>.</p>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const GENESIS = new Date("2009-01-03T00:00:00Z").getTime();
+    const DAY = 86400000;
+    const HISTORY_CACHE_KEY = "bitcoin-power-law-history-cache-v1";
+    const LIVE_QUOTE_REFRESH_MS = 60000;
+    const state = {
+      history: [],
+      liveQuote: null,
+      dataSource: "",
+      dataError: "",
+      cacheStatus: "",
+      liveError: "",
+      horizonYear: 2036,
+      hover: null,
+      model: {
+        a: 1.6e-17,
+        b: 5.77,
+        floor: 0.42,
+        upper: 3
+      }
+    };
+
+    const els = {
+      canvas: document.getElementById("chart"),
+      wrap: document.getElementById("canvasWrap"),
+      tooltip: document.getElementById("tooltip"),
+      status: document.getElementById("statusText"),
+      dot: document.getElementById("statusDot"),
+      spotPrice: document.getElementById("spotPrice"),
+      spotDate: document.getElementById("spotDate"),
+      fairValue: document.getElementById("fairValue"),
+      deviation: document.getElementById("deviation"),
+      zoneLabel: document.getElementById("zoneLabel"),
+      oscillator: document.getElementById("oscillator"),
+      projection: document.getElementById("projection"),
+      auditBox: document.getElementById("auditBox"),
+      coefA: document.getElementById("coefA"),
+      coefB: document.getElementById("coefB"),
+      floorMult: document.getElementById("floorMult"),
+      upperMult: document.getElementById("upperMult"),
+      showBands: document.getElementById("showBands"),
+      showHistory: document.getElementById("showHistory")
+    };
+
+    function daysSinceGenesis(ms) {
+      return Math.max(1, (ms - GENESIS) / DAY);
+    }
+
+    function fairValue(ms) {
+      return state.model.a * Math.pow(daysSinceGenesis(ms), state.model.b);
+    }
+
+    function money(value) {
+      if (!Number.isFinite(value)) return "--";
+      if (value >= 1000000) return "$" + (value / 1000000).toFixed(value >= 10000000 ? 1 : 2) + "M";
+      if (value >= 1000) return "$" + Math.round(value).toLocaleString();
+      if (value >= 1) return "$" + value.toFixed(2);
+      return "$" + value.toPrecision(2);
+    }
+
+    function pct(value) {
+      if (!Number.isFinite(value)) return "--";
+      return (value >= 0 ? "+" : "") + Math.round(value) + "%";
+    }
+
+    function dateLabel(ms) {
+      return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(ms));
+    }
+
+    function timeLabel(ms) {
+      return new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(ms));
+    }
+
+    function utcDay(ms) {
+      const d = new Date(ms);
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    }
+
+    function latestCompleteUtcDay(now = Date.now()) {
+      return utcDay(now) - DAY;
+    }
+
+    function zoneFor(price, fair) {
+      const r = price / fair;
+      if (r < state.model.floor) return ["Below floor", "zone-deep"];
+      if (r < 0.75) return ["Deep Value Zone", "zone-deep"];
+      if (r < 1.25) return ["Value / Fair Zone", "zone-value"];
+      if (r < 2) return ["Hot Zone", "zone-hot"];
+      if (r < state.model.upper) return ["Overheated", "zone-over"];
+      return ["Mania Zone", "zone-mania"];
+    }
+
+    function oscillator(price, fair) {
+      const low = fair * state.model.floor;
+      const high = fair * state.model.upper;
+      return Math.max(0, Math.min(100, ((price - low) / (high - low)) * 100));
+    }
+
+    function bandMultipliers() {
+      const floor = Math.min(state.model.floor, 0.7);
+      const upper = Math.max(state.model.upper, 2.1);
+      return {
+        floor,
+        deep: 0.75,
+        value: 1.25,
+        hot: 2,
+        upper,
+        mania: Math.max(5, upper * 1.65)
+      };
+    }
+
+    function modelSeries(startMs, endMs, stepDays = 30) {
+      const bands = bandMultipliers();
+      const rows = [];
+      for (let t = startMs; t <= endMs; t += stepDays * DAY) {
+        const fair = fairValue(t);
+        rows.push({
+          t,
+          fair,
+          floor: fair * bands.floor,
+          deep: fair * bands.deep,
+          value: fair * bands.value,
+          hot: fair * bands.hot,
+          upper: fair * bands.upper,
+          mania: fair * bands.mania
+        });
+      }
+      return rows;
+    }
+
+    const AUDITED_RECENT_HISTORY = [
+      { t: Date.UTC(2026, 4, 27), price: 74410, source: "CoinCodex daily close" },
+      { t: Date.UTC(2026, 4, 28), price: 73554, source: "CoinCodex daily close" },
+      { t: Date.UTC(2026, 4, 29), price: 73476, source: "CoinCodex May 29 daily close" },
+      { t: Date.UTC(2026, 4, 30), price: 73868, source: "CoinCodex daily close" }
+    ];
+
+    function normalizeDaily(rows) {
+      const byDay = new Map();
+      const latestComplete = latestCompleteUtcDay();
+      for (const row of rows) {
+        if (!Number.isFinite(row.t) || !Number.isFinite(row.price) || row.price <= 0) continue;
+        const day = utcDay(row.t);
+        if (day > latestComplete) continue;
+        byDay.set(day, { t: day, price: row.price, source: row.source });
+      }
+      return [...byDay.values()].sort((a, b) => a.t - b.t);
+    }
+
+    function loadHistoryCache() {
+      try {
+        const raw = localStorage.getItem(HISTORY_CACHE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        const history = normalizeDaily(parsed.history || []);
+        if (!history.length) return null;
+        return {
+          history,
+          source: parsed.source || "Browser cache",
+          savedAt: parsed.savedAt || 0
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    function saveHistoryCache(history, source) {
+      if (!history.length || history === AUDITED_RECENT_HISTORY) return;
+      try {
+        localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify({
+          history,
+          source,
+          savedAt: Date.now()
+        }));
+      } catch {
+        state.cacheStatus = "Historical cache could not be saved in this browser.";
+      }
+    }
+
+    function cacheNeedsRefresh(cache) {
+      if (!cache || !cache.history.length) return true;
+      const latestCachedDay = cache.history[cache.history.length - 1].t;
+      return latestCachedDay < latestCompleteUtcDay();
+    }
+
+    async function fetchJson(url, timeoutMs = 12000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, { cache: "no-store", signal: controller.signal });
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return await res.json();
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    async function fetchCoinGeckoHistory() {
+      const url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=max&interval=daily";
+      const json = await fetchJson(url);
+      return normalizeDaily(json.prices.map(([t, price]) => ({ t, price, source: "CoinGecko daily" })));
+    }
+
+    async function fetchCryptoCompareHistory() {
+      const url = "https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&allData=true";
+      const json = await fetchJson(url);
+      if (!json.Data || !Array.isArray(json.Data.Data)) throw new Error("Unexpected CryptoCompare response");
+      return normalizeDaily(json.Data.Data.map((d) => ({
+        t: d.time * 1000,
+        price: d.close,
+        source: "CryptoCompare daily close"
+      })));
+    }
+
+    async function fetchBinanceHistory() {
+      const rows = [];
+      let startTime = Date.UTC(2017, 7, 17);
+      const endTime = Date.now();
+      while (startTime < endTime) {
+        const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&startTime=${startTime}&limit=1000`;
+        const json = await fetchJson(url);
+        if (!Array.isArray(json) || json.length === 0) break;
+        rows.push(...json.map((d) => ({ t: d[0], price: Number(d[4]), source: "Binance BTCUSDT daily close" })));
+        const last = json[json.length - 1][0];
+        if (last <= startTime) break;
+        startTime = last + DAY;
+        if (rows.length > 5000) break;
+      }
+      return normalizeDaily(rows);
+    }
+
+    async function fetchFreshHistory() {
+      const providers = [
+        ["CoinGecko daily", fetchCoinGeckoHistory],
+        ["CryptoCompare daily close", fetchCryptoCompareHistory],
+        ["Binance BTCUSDT daily close", fetchBinanceHistory]
+      ];
+      const errors = [];
+      for (const [name, loader] of providers) {
+        try {
+          const history = await loader();
+          if (history.length < 100) throw new Error("Not enough rows returned");
+          return { history, source: name, limited: false, errors };
+        } catch (error) {
+          errors.push(`${name}: ${error.message}`);
+        }
+      }
+      return {
+        history: AUDITED_RECENT_HISTORY,
+        source: "Audited static May 2026 anchors",
+        limited: true,
+        errors
+      };
+    }
+
+    async function loadHistoricalLayer() {
+      const cache = loadHistoryCache();
+      if (cache && !cacheNeedsRefresh(cache)) {
+        const latest = cache.history[cache.history.length - 1];
+        state.cacheStatus = `Historical cache hit: ${cache.history.length.toLocaleString()} daily closes through ${dateLabel(latest.t)}.`;
+        return {
+          history: cache.history,
+          source: `${cache.source} cache`,
+          limited: false,
+          errors: []
+        };
+      }
+
+      const result = await fetchFreshHistory();
+      if (!result.limited) {
+        saveHistoryCache(result.history, result.source);
+        const latest = result.history[result.history.length - 1];
+        state.cacheStatus = `Historical cache refreshed: ${result.history.length.toLocaleString()} daily closes through ${dateLabel(latest.t)}.`;
+      } else if (cache && cache.history.length) {
+        const latest = cache.history[cache.history.length - 1];
+        state.cacheStatus = `Using stale historical cache through ${dateLabel(latest.t)} because live history providers failed.`;
+        return {
+          history: cache.history,
+          source: `${cache.source} stale cache`,
+          limited: false,
+          errors: result.errors
+        };
+      } else {
+        state.cacheStatus = "No full historical cache exists yet; using limited audited anchors.";
+      }
+      return result;
+    }
+
+    async function fetchCoinGeckoQuote() {
+      const url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_last_updated_at=true";
+      const json = await fetchJson(url, 8000);
+      const data = json.bitcoin || {};
+      if (!Number.isFinite(data.usd)) throw new Error("Unexpected CoinGecko quote response");
+      return {
+        price: data.usd,
+        t: Number.isFinite(data.last_updated_at) ? data.last_updated_at * 1000 : Date.now(),
+        source: "CoinGecko live spot"
+      };
+    }
+
+    async function fetchBinanceQuote() {
+      const json = await fetchJson("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", 8000);
+      const price = Number(json.price);
+      if (!Number.isFinite(price)) throw new Error("Unexpected Binance quote response");
+      return { price, t: Date.now(), source: "Binance BTCUSDT live spot" };
+    }
+
+    async function fetchCryptoCompareQuote() {
+      const json = await fetchJson("https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD", 8000);
+      if (!Number.isFinite(json.USD)) throw new Error("Unexpected CryptoCompare quote response");
+      return { price: json.USD, t: Date.now(), source: "CryptoCompare live spot" };
+    }
+
+    async function fetchLiveQuote() {
+      const providers = [
+        fetchCoinGeckoQuote,
+        fetchBinanceQuote,
+        fetchCryptoCompareQuote
+      ];
+      const errors = [];
+      for (const loader of providers) {
+        try {
+          return await loader();
+        } catch (error) {
+          errors.push(error.message);
+        }
+      }
+      throw new Error(errors.join("; "));
+    }
+
+    async function refreshLiveQuote() {
+      try {
+        state.liveQuote = await fetchLiveQuote();
+        state.liveError = "";
+        updateSummary();
+        updateAudit();
+        draw();
+      } catch (error) {
+        state.liveError = error.message;
+        updateSummary();
+        updateAudit();
+      }
+    }
+
+    function getLatestPoint() {
+      return state.history[state.history.length - 1] || { t: Date.now(), price: NaN };
+    }
+
+    function getCurrentMetricPoint() {
+      return state.liveQuote || getLatestPoint();
+    }
+
+    function updateSummary() {
+      const latest = getCurrentMetricPoint();
+      const fair = fairValue(latest.t);
+      if (!Number.isFinite(latest.price)) {
+        els.spotPrice.textContent = "--";
+        els.spotDate.textContent = state.liveError ? `Live quote unavailable; ${state.dataError || "no fallback price"}` : (state.dataError || "No verified market data");
+        els.fairValue.textContent = money(fair);
+        els.deviation.textContent = "--";
+        els.zoneLabel.textContent = "No price classification";
+        els.zoneLabel.className = "";
+        els.oscillator.textContent = "--";
+        return;
+      }
+      const dev = (latest.price / fair - 1) * 100;
+      const [zone, zoneClass] = zoneFor(latest.price, fair);
+      els.spotPrice.textContent = money(latest.price);
+      els.spotDate.textContent = latest.source ? `${dateLabel(latest.t)} · ${latest.source}` : `${dateLabel(latest.t)} · ${state.dataSource}`;
+      els.fairValue.textContent = money(fair);
+      els.deviation.textContent = pct(dev);
+      els.zoneLabel.textContent = zone;
+      els.zoneLabel.className = zoneClass;
+      els.oscillator.textContent = Math.round(oscillator(latest.price, fair)) + "/100";
+    }
+
+    function updateSummary() {
+      const latest = getCurrentMetricPoint();
+      const fair = fairValue(latest.t);
+      if (!Number.isFinite(latest.price)) {
+        els.spotPrice.textContent = "--";
+        els.spotDate.textContent = state.liveError ? `Live quote unavailable; ${state.dataError || "no fallback price"}` : (state.dataError || "No verified market data");
+        els.fairValue.textContent = money(fair);
+        els.deviation.textContent = "--";
+        els.zoneLabel.textContent = "No price classification";
+        els.zoneLabel.className = "";
+        els.oscillator.textContent = "--";
+        return;
+      }
+      const dev = (latest.price / fair - 1) * 100;
+      const [zone, zoneClass] = zoneFor(latest.price, fair);
+      els.spotPrice.textContent = money(latest.price);
+      if (state.liveQuote) {
+        els.spotDate.textContent = `Live spot - ${timeLabel(latest.t)} - ${latest.source}`;
+      } else {
+        els.spotDate.textContent = latest.source ? `${dateLabel(latest.t)} - ${latest.source}` : `${dateLabel(latest.t)} - ${state.dataSource}`;
+      }
+      els.fairValue.textContent = money(fair);
+      els.deviation.textContent = pct(dev);
+      els.zoneLabel.textContent = zone;
+      els.zoneLabel.className = zoneClass;
+      els.oscillator.textContent = Math.round(oscillator(latest.price, fair)) + "/100";
+    }
+
+    function updateAudit() {
+      const may29 = Date.UTC(2026, 4, 29);
+      const point = state.history.find((d) => d.t === may29);
+      const anchor = 73476;
+      const diff = point ? ((point.price / anchor - 1) * 100) : NaN;
+      const auditText = point
+        ? `Loaded May 29, 2026 as <strong>${money(point.price)}</strong>. CoinCodex May 29 daily close reference: <strong>${money(anchor)}</strong>. Difference vs reference: <strong>${Number.isFinite(diff) ? diff.toFixed(2) + "%" : "n/a"}</strong>.`
+        : `This source does not include May 29, 2026 yet. CoinCodex May 29 daily close reference: <strong>${money(anchor)}</strong>.`;
+      const mode = state.dataError ? `<br><br><strong>Loader note:</strong> ${state.dataError}` : "";
+      const live = state.liveQuote
+        ? `<br><strong>Live quote:</strong> ${money(state.liveQuote.price)} from ${state.liveQuote.source}, updated ${timeLabel(state.liveQuote.t)}.`
+        : `<br><strong>Live quote:</strong> unavailable${state.liveError ? ` - ${state.liveError}` : ""}.`;
+      const cache = state.cacheStatus ? `<br><strong>Historical cache:</strong> ${state.cacheStatus}` : "";
+      els.auditBox.innerHTML = `<strong>Historical source:</strong> ${state.dataSource}<br>${auditText}${live}${cache}${mode}`;
+    }
+
+    function updateProjection() {
+      const years = [2028, 2029, 2032, 2036, 2040, 2045];
+      els.projection.innerHTML = years.map((year) => {
+        const t = Date.UTC(year, 0, 1);
+        const fair = fairValue(t);
+        return `<div class="row"><b>${year}</b><div>${money(fair)}<span>Floor ${money(fair * state.model.floor)} · Upper ${money(fair * state.model.upper)}</span></div></div>`;
+      }).join("");
+    }
+
+    function getBounds(series, history, endMs) {
+      const values = [];
+      for (const d of series) {
+        values.push(d.floor, d.mania);
+      }
+      for (const d of history) {
+        if (d.t <= endMs) values.push(d.price);
+      }
+      if (state.liveQuote && state.liveQuote.t <= endMs) values.push(state.liveQuote.price);
+      return {
+        yMin: Math.min(...values.filter(Number.isFinite)) * 0.72,
+        yMax: Math.max(...values.filter(Number.isFinite)) * 1.22
+      };
+    }
+
+    function draw() {
+      const canvas = els.canvas;
+      const rect = els.wrap.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(rect.width * dpr);
+      canvas.height = Math.floor(rect.height * dpr);
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const w = rect.width;
+      const h = rect.height;
+      const pad = { l: 72, r: 28, t: 24, b: 48 };
+      const start = new Date("2010-07-01T00:00:00Z").getTime();
+      const end = Date.UTC(state.horizonYear, 11, 31);
+      const series = modelSeries(start, end, 20);
+      const history = state.history.filter((d) => d.t >= start && d.t <= end);
+      const bounds = getBounds(series, history, end);
+      const logMin = Math.log10(bounds.yMin);
+      const logMax = Math.log10(bounds.yMax);
+      const x = (t) => pad.l + ((t - start) / (end - start)) * (w - pad.l - pad.r);
+      const y = (value) => pad.t + (1 - (Math.log10(value) - logMin) / (logMax - logMin)) * (h - pad.t - pad.b);
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = "#0c1015";
+      ctx.fillRect(0, 0, w, h);
+
+      drawGrid(ctx, w, h, pad, x, y, start, end, logMin, logMax);
+
+      if (els.showBands.checked) {
+        fillBand(ctx, series, x, y, "floor", "deep", "rgba(74,168,255,0.22)");
+        fillBand(ctx, series, x, y, "deep", "value", "rgba(71,209,140,0.23)");
+        fillBand(ctx, series, x, y, "value", "hot", "rgba(255,155,69,0.24)");
+        fillBand(ctx, series, x, y, "hot", "upper", "rgba(255,90,104,0.22)");
+        fillBand(ctx, series, x, y, "upper", "mania", "rgba(180,135,255,0.20)");
+      }
+
+      drawLine(ctx, series, x, y, "fair", "#f6b73c", 2.4);
+      drawLine(ctx, series, x, y, "floor", "#4aa8ff", 1.3);
+      drawLine(ctx, series, x, y, "deep", "rgba(74,168,255,0.58)", 0.9);
+      drawLine(ctx, series, x, y, "value", "rgba(71,209,140,0.58)", 0.9);
+      drawLine(ctx, series, x, y, "hot", "rgba(255,155,69,0.62)", 0.9);
+      drawLine(ctx, series, x, y, "upper", "#ff5a68", 1.3);
+
+      if (els.showHistory.checked && history.length > 1) {
+        drawLine(ctx, history, x, y, "price", "#f5f7fb", 1.8);
+      } else if (els.showHistory.checked && history.length === 1) {
+        ctx.fillStyle = "#f5f7fb";
+        ctx.beginPath();
+        ctx.arc(x(history[0].t), y(history[0].price), 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (state.liveQuote && state.liveQuote.t >= start && state.liveQuote.t <= end) {
+        const lx = x(state.liveQuote.t);
+        const ly = y(state.liveQuote.price);
+        ctx.fillStyle = "#ffffff";
+        ctx.strokeStyle = "#0c1015";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(lx, ly, 5.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      drawHalvings(ctx, x, pad, h, start, end);
+
+      if (state.hover) {
+        drawHover(ctx, state.hover, x, y, w, h, pad, start, end, history);
+      }
+    }
+
+    function drawGrid(ctx, w, h, pad, x, y, start, end, logMin, logMax) {
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      ctx.lineWidth = 1;
+      ctx.fillStyle = "rgba(237,242,247,0.64)";
+      ctx.font = "12px Inter, sans-serif";
+
+      const yTicks = [0.1, 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000];
+      for (const v of yTicks) {
+        if (Math.log10(v) < logMin || Math.log10(v) > logMax) continue;
+        const yy = y(v);
+        ctx.beginPath();
+        ctx.moveTo(pad.l, yy);
+        ctx.lineTo(w - pad.r, yy);
+        ctx.stroke();
+        ctx.fillText(money(v), 10, yy + 4);
+      }
+
+      const startYear = new Date(start).getUTCFullYear();
+      const endYear = new Date(end).getUTCFullYear();
+      for (let year = Math.ceil(startYear / 2) * 2; year <= endYear; year += 2) {
+        const xx = x(Date.UTC(year, 0, 1));
+        ctx.beginPath();
+        ctx.moveTo(xx, pad.t);
+        ctx.lineTo(xx, h - pad.b);
+        ctx.stroke();
+        ctx.fillText(String(year), xx - 13, h - 18);
+      }
+    }
+
+    function fillBand(ctx, series, x, y, lower, upper, color) {
+      ctx.beginPath();
+      series.forEach((d, i) => {
+        const px = x(d.t);
+        const py = y(d[upper]);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      for (let i = series.length - 1; i >= 0; i--) {
+        const d = series[i];
+        ctx.lineTo(x(d.t), y(d[lower]));
+      }
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
+
+    function drawLine(ctx, rows, x, y, key, color, width) {
+      ctx.beginPath();
+      rows.forEach((d, i) => {
+        const px = x(d.t);
+        const py = y(d[key]);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.stroke();
+    }
+
+    function drawHalvings(ctx, x, pad, h, start, end) {
+      const halvings = [
+        ["2012", Date.UTC(2012, 10, 28)],
+        ["2016", Date.UTC(2016, 6, 9)],
+        ["2020", Date.UTC(2020, 4, 11)],
+        ["2024", Date.UTC(2024, 3, 20)],
+        ["2028e", Date.UTC(2028, 3, 15)],
+        ["2032e", Date.UTC(2032, 3, 15)]
+      ];
+      ctx.save();
+      ctx.setLineDash([4, 5]);
+      ctx.strokeStyle = "rgba(246,183,60,0.32)";
+      ctx.fillStyle = "rgba(246,183,60,0.75)";
+      ctx.font = "11px Inter, sans-serif";
+      for (const [label, t] of halvings) {
+        if (t < start || t > end) continue;
+        const xx = x(t);
+        ctx.beginPath();
+        ctx.moveTo(xx, pad.t);
+        ctx.lineTo(xx, h - pad.b);
+        ctx.stroke();
+        ctx.fillText(label, xx + 5, pad.t + 15);
+      }
+      ctx.restore();
+    }
+
+    function drawHover(ctx, hover, x, y, w, h, pad, start, end, history) {
+      const t = start + ((hover.x - pad.l) / (w - pad.l - pad.r)) * (end - start);
+      const clamped = Math.max(start, Math.min(end, t));
+      const xx = x(clamped);
+      const fair = fairValue(clamped);
+      const nearest = history.reduce((best, d) => Math.abs(d.t - clamped) < Math.abs(best.t - clamped) ? d : best, history[0] || { t: clamped, price: NaN });
+      ctx.strokeStyle = "rgba(255,255,255,0.34)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(xx, pad.t);
+      ctx.lineTo(xx, h - pad.b);
+      ctx.stroke();
+      ctx.fillStyle = "#f6b73c";
+      ctx.beginPath();
+      ctx.arc(xx, y(fair), 3.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      const priceText = Number.isFinite(nearest.price) ? `<br>BTC close: ${money(nearest.price)}<br>Source: ${nearest.source || state.dataSource}` : "";
+      els.tooltip.innerHTML = `<b>${dateLabel(clamped)}</b><br>Fair value: ${money(fair)}<br>Floor: ${money(fair * state.model.floor)}<br>Upper: ${money(fair * state.model.upper)}${priceText}`;
+      els.tooltip.style.left = Math.min(w - 300, Math.max(8, hover.x)) + "px";
+      els.tooltip.style.top = Math.min(h - 150, Math.max(8, hover.y)) + "px";
+      els.tooltip.classList.add("visible");
+    }
+
+    function wireEvents() {
+      for (const input of [els.coefA, els.coefB, els.floorMult, els.upperMult]) {
+        input.addEventListener("input", () => {
+          state.model.a = Number(els.coefA.value) || 1.6e-17;
+          state.model.b = Number(els.coefB.value) || 5.77;
+          state.model.floor = Number(els.floorMult.value) || 0.42;
+          state.model.upper = Math.max(2.1, Number(els.upperMult.value) || 3);
+          updateSummary();
+          updateProjection();
+          draw();
+        });
+      }
+
+      for (const input of [els.showBands, els.showHistory]) {
+        input.addEventListener("change", draw);
+      }
+
+      document.querySelectorAll("[data-horizon]").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll("[data-horizon]").forEach((b) => b.classList.remove("active"));
+          button.classList.add("active");
+          state.horizonYear = Number(button.dataset.horizon);
+          draw();
+        });
+      });
+
+      els.wrap.addEventListener("mousemove", (event) => {
+        const rect = els.wrap.getBoundingClientRect();
+        state.hover = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+        draw();
+      });
+
+      els.wrap.addEventListener("mouseleave", () => {
+        state.hover = null;
+        els.tooltip.classList.remove("visible");
+        draw();
+      });
+
+      window.addEventListener("resize", draw);
+    }
+
+    async function init() {
+      wireEvents();
+      updateProjection();
+      try {
+        const result = await loadHistoricalLayer();
+        state.history = result.history;
+        state.dataSource = result.source;
+        state.dataError = result.limited ? result.errors.join("; ") : "";
+        els.status.textContent = result.limited ? "Limited audited history" : "Cached history + live quote";
+        els.dot.classList.toggle("live", !result.limited);
+        els.dot.classList.toggle("error", result.limited);
+      } catch (error) {
+        state.history = [];
+        state.dataSource = "No market data loaded";
+        state.dataError = error.message;
+        els.status.textContent = "Market data unavailable";
+        els.dot.classList.remove("live");
+        els.dot.classList.add("error");
+      }
+      updateSummary();
+      updateAudit();
+      draw();
+      await refreshLiveQuote();
+      setInterval(refreshLiveQuote, LIVE_QUOTE_REFRESH_MS);
+    }
+
+    init();
+  </script>
+</body>
+</html>
