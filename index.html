@@ -353,6 +353,24 @@
       color: var(--ink);
     }
 
+    .refresh-data {
+      width: 100%;
+      margin-top: 10px;
+      border: 1px solid rgba(246, 183, 60, 0.34);
+      border-radius: 8px;
+      background: rgba(246, 183, 60, 0.14);
+      color: var(--gold);
+      font: inherit;
+      font-weight: 720;
+      padding: 9px 10px;
+      cursor: pointer;
+    }
+
+    .refresh-data:disabled {
+      cursor: wait;
+      opacity: 0.62;
+    }
+
     .zone-deep { color: var(--blue); }
     .zone-value { color: var(--green); }
     .zone-hot { color: var(--orange); }
@@ -477,6 +495,7 @@
         <section class="panel">
           <h2>Data Audit</h2>
           <div class="audit" id="auditBox">Checking market data source...</div>
+          <button class="refresh-data" id="refreshData" type="button">Refresh data now</button>
         </section>
 
         <section class="panel">
@@ -524,6 +543,7 @@
       oscillator: document.getElementById("oscillator"),
       projection: document.getElementById("projection"),
       auditBox: document.getElementById("auditBox"),
+      refreshData: document.getElementById("refreshData"),
       coefA: document.getElementById("coefA"),
       coefB: document.getElementById("coefB"),
       floorMult: document.getElementById("floorMult"),
@@ -531,6 +551,8 @@
       showBands: document.getElementById("showBands"),
       showHistory: document.getElementById("showHistory")
     };
+    let eventsWired = false;
+    let liveQuoteTimer = null;
 
     function daysSinceGenesis(ms) {
       return Math.max(1, (ms - GENESIS) / DAY);
@@ -743,9 +765,9 @@
       };
     }
 
-    async function loadHistoricalLayer() {
+    async function loadHistoricalLayer(forceRefresh = false) {
       const cache = loadHistoryCache();
-      if (cache && !cacheNeedsRefresh(cache)) {
+      if (!forceRefresh && cache && !cacheNeedsRefresh(cache)) {
         const latest = cache.history[cache.history.length - 1];
         state.cacheStatus = `Historical cache hit: ${cache.history.length.toLocaleString()} daily closes through ${dateLabel(latest.t)}.`;
         return {
@@ -760,7 +782,7 @@
       if (!result.limited) {
         saveHistoryCache(result.history, result.source);
         const latest = result.history[result.history.length - 1];
-        state.cacheStatus = `Historical cache refreshed: ${result.history.length.toLocaleString()} daily closes through ${dateLabel(latest.t)}.`;
+        state.cacheStatus = `${forceRefresh ? "Manual refresh loaded" : "Historical cache refreshed"}: ${result.history.length.toLocaleString()} daily closes through ${dateLabel(latest.t)}.`;
       } else if (cache && cache.history.length) {
         const latest = cache.history[cache.history.length - 1];
         state.cacheStatus = `Using stale historical cache through ${dateLabel(latest.t)} because live history providers failed.`;
@@ -895,17 +917,22 @@
     function updateAudit() {
       const may29 = Date.UTC(2026, 4, 29);
       const point = state.history.find((d) => d.t === may29);
+      const latest = getLatestPoint();
       const anchor = 73476;
       const diff = point ? ((point.price / anchor - 1) * 100) : NaN;
+      const latestText = Number.isFinite(latest.price)
+        ? `<br><strong>Latest historical close:</strong> ${money(latest.price)} on ${dateLabel(latest.t)}.`
+        : `<br><strong>Latest historical close:</strong> unavailable.`;
       const auditText = point
-        ? `Loaded May 29, 2026 as <strong>${money(point.price)}</strong>. CoinCodex May 29 daily close reference: <strong>${money(anchor)}</strong>. Difference vs reference: <strong>${Number.isFinite(diff) ? diff.toFixed(2) + "%" : "n/a"}</strong>.`
-        : `This source does not include May 29, 2026 yet. CoinCodex May 29 daily close reference: <strong>${money(anchor)}</strong>.`;
+        ? `<br><strong>May 29 checkpoint:</strong> source loaded ${money(point.price)} vs CoinCodex reference ${money(anchor)} (${Number.isFinite(diff) ? diff.toFixed(2) + "%" : "n/a"}).`
+        : `<br><strong>May 29 checkpoint:</strong> this source does not include the reference day yet; CoinCodex reference is ${money(anchor)}.`;
       const mode = state.dataError ? `<br><br><strong>Loader note:</strong> ${state.dataError}` : "";
       const live = state.liveQuote
         ? `<br><strong>Live quote:</strong> ${money(state.liveQuote.price)} from ${state.liveQuote.source}, updated ${timeLabel(state.liveQuote.t)}.`
         : `<br><strong>Live quote:</strong> unavailable${state.liveError ? ` - ${state.liveError}` : ""}.`;
       const cache = state.cacheStatus ? `<br><strong>Historical cache:</strong> ${state.cacheStatus}` : "";
-      els.auditBox.innerHTML = `<strong>Historical source:</strong> ${state.dataSource}<br>${auditText}${live}${cache}${mode}`;
+      const policy = `<br><strong>Refresh policy:</strong> live quote updates every minute; historical daily closes refresh when cached history is older than the latest completed UTC day, or when you press Refresh data now.`;
+      els.auditBox.innerHTML = `<strong>Historical source:</strong> ${state.dataSource}${latestText}${auditText}${live}${cache}${policy}${mode}`;
     }
 
     function updateProjection() {
@@ -1114,6 +1141,9 @@
     }
 
     function wireEvents() {
+      if (eventsWired) return;
+      eventsWired = true;
+
       for (const input of [els.coefA, els.coefB, els.floorMult, els.upperMult]) {
         input.addEventListener("input", () => {
           state.model.a = Number(els.coefA.value) || 1.6e-17;
@@ -1152,13 +1182,25 @@
       });
 
       window.addEventListener("resize", draw);
+
+      els.refreshData.addEventListener("click", async () => {
+        els.refreshData.disabled = true;
+        els.refreshData.textContent = "Refreshing...";
+        els.status.textContent = "Refreshing market data";
+        try {
+          await init({ forceHistoryRefresh: true });
+        } finally {
+          els.refreshData.disabled = false;
+          els.refreshData.textContent = "Refresh data now";
+        }
+      });
     }
 
-    async function init() {
+    async function init(options = {}) {
       wireEvents();
       updateProjection();
       try {
-        const result = await loadHistoricalLayer();
+        const result = await loadHistoricalLayer(Boolean(options.forceHistoryRefresh));
         state.history = result.history;
         state.dataSource = result.source;
         state.dataError = result.limited ? result.errors.join("; ") : "";
@@ -1177,7 +1219,9 @@
       updateAudit();
       draw();
       await refreshLiveQuote();
-      setInterval(refreshLiveQuote, LIVE_QUOTE_REFRESH_MS);
+      if (!liveQuoteTimer) {
+        liveQuoteTimer = setInterval(refreshLiveQuote, LIVE_QUOTE_REFRESH_MS);
+      }
     }
 
     init();
