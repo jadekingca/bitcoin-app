@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Bitcoin Power Law Workbench</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <style>
     :root {
       --bg: #0b0d10;
@@ -103,8 +104,9 @@
 
     .metrics {
       display: grid;
-      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      grid-template-columns: minmax(190px, 1.05fr) minmax(360px, 1.5fr) minmax(150px, 0.82fr) minmax(160px, 0.9fr);
       gap: 10px;
+      align-items: start;
       margin-bottom: 14px;
     }
 
@@ -139,6 +141,49 @@
       color: var(--muted);
       font-style: normal;
       font-size: 0.88rem;
+    }
+
+    .fair-metric {
+      display: grid;
+      grid-template-columns: minmax(155px, 0.85fr) minmax(220px, 1fr);
+      column-gap: 16px;
+      align-items: end;
+      min-height: 110px;
+    }
+
+    .metric-main {
+      min-width: 0;
+    }
+
+    .metric-bands {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 0;
+      align-self: end;
+    }
+
+    .metric-band {
+      min-width: 0;
+      border-left: 2px solid currentColor;
+      padding-left: 8px;
+      color: var(--muted);
+    }
+
+    .metric-band b {
+      display: block;
+      color: var(--ink);
+      font-size: clamp(1rem, 1.25vw, 1.18rem);
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+
+    .metric-band small {
+      display: block;
+      margin-bottom: 3px;
+      font-size: 0.74rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
     }
 
     .workspace {
@@ -404,6 +449,14 @@
         grid-template-columns: 1fr;
       }
 
+      .fair-metric {
+        display: block;
+      }
+
+      .metric-bands {
+        margin-top: 10px;
+      }
+
       .toolbar {
         grid-template-columns: 1fr;
       }
@@ -435,7 +488,17 @@
 
     <section class="metrics" aria-label="Model snapshot">
       <div class="metric"><span>BTC price</span><strong id="spotPrice">--</strong><em id="spotDate">Awaiting data</em></div>
-      <div class="metric"><span>Model fair value</span><strong id="fairValue">--</strong><em id="fairModel">Porkopolis coefficients</em></div>
+      <div class="metric fair-metric">
+        <div class="metric-main">
+          <span>Model fair value</span>
+          <strong id="fairValue">--</strong>
+          <em id="fairModel">Porkopolis coefficients</em>
+        </div>
+        <div class="metric-bands" aria-label="Current valuation band prices">
+          <div class="metric-band zone-deep"><small>Today floor</small><b id="todayFloor">--</b></div>
+          <div class="metric-band zone-over"><small>Today upper</small><b id="todayUpper">--</b></div>
+        </div>
+      </div>
       <div class="metric"><span>Deviation</span><strong id="deviation">--</strong><em id="zoneLabel">Classifying zone</em></div>
       <div class="metric"><span>Oscillator</span><strong id="oscillator">--</strong><em>Floor to mania corridor</em></div>
     </section>
@@ -538,6 +601,8 @@
       spotPrice: document.getElementById("spotPrice"),
       spotDate: document.getElementById("spotDate"),
       fairValue: document.getElementById("fairValue"),
+      todayFloor: document.getElementById("todayFloor"),
+      todayUpper: document.getElementById("todayUpper"),
       deviation: document.getElementById("deviation"),
       zoneLabel: document.getElementById("zoneLabel"),
       oscillator: document.getElementById("oscillator"),
@@ -862,13 +927,15 @@
       return state.liveQuote || getLatestPoint();
     }
 
-    function updateSummary() {
+    function updateSummaryLegacy() {
       const latest = getCurrentMetricPoint();
       const fair = fairValue(latest.t);
+      els.fairValue.textContent = money(fair);
+      els.todayFloor.textContent = money(fair * state.model.floor);
+      els.todayUpper.textContent = money(fair * state.model.upper);
       if (!Number.isFinite(latest.price)) {
         els.spotPrice.textContent = "--";
         els.spotDate.textContent = state.liveError ? `Live quote unavailable; ${state.dataError || "no fallback price"}` : (state.dataError || "No verified market data");
-        els.fairValue.textContent = money(fair);
         els.deviation.textContent = "--";
         els.zoneLabel.textContent = "No price classification";
         els.zoneLabel.className = "";
@@ -889,10 +956,12 @@
     function updateSummary() {
       const latest = getCurrentMetricPoint();
       const fair = fairValue(latest.t);
+      els.fairValue.textContent = money(fair);
+      els.todayFloor.textContent = money(fair * state.model.floor);
+      els.todayUpper.textContent = money(fair * state.model.upper);
       if (!Number.isFinite(latest.price)) {
         els.spotPrice.textContent = "--";
         els.spotDate.textContent = state.liveError ? `Live quote unavailable; ${state.dataError || "no fallback price"}` : (state.dataError || "No verified market data");
-        els.fairValue.textContent = money(fair);
         els.deviation.textContent = "--";
         els.zoneLabel.textContent = "No price classification";
         els.zoneLabel.className = "";
@@ -907,7 +976,6 @@
       } else {
         els.spotDate.textContent = latest.source ? `${dateLabel(latest.t)} - ${latest.source}` : `${dateLabel(latest.t)} - ${state.dataSource}`;
       }
-      els.fairValue.textContent = money(fair);
       els.deviation.textContent = pct(dev);
       els.zoneLabel.textContent = zone;
       els.zoneLabel.className = zoneClass;
