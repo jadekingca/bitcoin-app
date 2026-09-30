@@ -481,7 +481,7 @@
     <header>
       <div>
         <h1>Bitcoin Power Law Workbench</h1>
-        <p class="subtitle">A log-log regression chart inspired by Bitcoin Power Law Bands and Santostasi/Porkopolis fair-value models. Values are model estimates, not financial advice.</p>
+        <p class="subtitle">A power-law model with a logarithmic price axis and linear calendar axis, inspired by Bitcoin Power Law Bands and Santostasi/Porkopolis fair-value models. Values are model estimates, not financial advice.</p>
       </div>
       <div class="status" id="status"><span class="dot" id="statusDot"></span><span id="statusText">Loading market data</span></div>
     </header>
@@ -492,15 +492,15 @@
         <div class="metric-main">
           <span>Model fair value</span>
           <strong id="fairValue">--</strong>
-          <em id="fairModel">Porkopolis coefficients</em>
+          <em id="fairModel">Editable workbench coefficients</em>
         </div>
         <div class="metric-bands" aria-label="Current valuation band prices">
-          <div class="metric-band zone-deep"><small>Today floor</small><b id="todayFloor">--</b></div>
-          <div class="metric-band zone-over"><small>Today upper</small><b id="todayUpper">--</b></div>
+          <div class="metric-band zone-deep"><small>As-of floor</small><b id="todayFloor">--</b></div>
+          <div class="metric-band zone-over"><small>As-of upper</small><b id="todayUpper">--</b></div>
         </div>
       </div>
       <div class="metric"><span>Deviation</span><strong id="deviation">--</strong><em id="zoneLabel">Classifying zone</em></div>
-      <div class="metric"><span>Oscillator</span><strong id="oscillator">--</strong><em>Floor to mania corridor</em></div>
+      <div class="metric"><span>Oscillator</span><strong id="oscillator">--</strong><em>Floor to upper corridor</em></div>
     </section>
 
     <section class="workspace">
@@ -513,7 +513,7 @@
             <span class="zone-hot"><i class="swatch"></i>Hot</span>
             <span class="zone-over"><i class="swatch"></i>Overheated</span>
             <span class="zone-cycle"><i class="swatch"></i>Mania</span>
-            <span style="color:#f5f7fb"><i class="swatch"></i>BTC close</span>
+            <span style="color:#f5f7fb"><i class="swatch"></i>BTC history + spot</span>
           </div>
           <div class="segmented" aria-label="Chart horizon">
             <button class="active" data-horizon="2036">2036</button>
@@ -540,18 +540,20 @@
           </div>
           <div class="control">
             <label for="floorMult">Floor multiple</label>
-            <input id="floorMult" type="number" value="0.42" min="0.05" max="1" step="0.01">
+            <input id="floorMult" type="number" value="0.42" min="0.05" max="0.7" step="0.01">
           </div>
           <div class="control">
             <label for="upperMult">Upper multiple</label>
             <input id="upperMult" type="number" value="3" min="2.1" max="10" step="0.1">
           </div>
           <label class="toggle"><input id="showBands" type="checkbox" checked> Show valuation bands</label>
-          <label class="toggle"><input id="showHistory" type="checkbox" checked> Show historical BTC close</label>
+          <label class="toggle"><input id="showHistory" type="checkbox" checked> Show BTC history + live series</label>
+        <label class="toggle"><input id="showLive" type="checkbox" checked> Show live marker overlay</label>
+          <p class="note">Defaults a = 1.6e-17, b = 5.77 are a fixed workbench preset, not a verified current Porkopolis fit. Earlier cited values a = 1.42e-17, b = 5.79 differ. No automatic regression is performed.</p>
         </section>
 
         <section class="panel">
-          <h2>Projection</h2>
+          <h2>Projection</h2><p class="note">January 1, 00:00 UTC of each year. P = a × t^b; t is elapsed days since January 3, 2009 UTC (minimum 1).</p>
           <div class="projection" id="projection"></div>
         </section>
 
@@ -563,7 +565,7 @@
 
         <section class="panel">
           <h2>Sources</h2>
-          <p class="note">The referenced TradingView script describes a log10 regression corridor with deep value, value, hot, and mania zones. Historical daily closes are cached locally in this browser; live spot quote is fetched separately for the current metric.</p>
+          <p class="note">The referenced TradingView script describes a log10 regression corridor with deep value, value, hot, and mania zones. Historical daily closes are cached locally in this browser; live spot is appended at its quote timestamp. Lines break across missing UTC days. CoinGecko daily samples are midnight observations, not exchange candle closes; Binance BTCUSDT is a USDT proxy.</p>
           <p class="note">References: <a href="https://www.tradingview.com/script/UdkfiWmJ/" target="_blank" rel="noreferrer">TradingView script</a>, <a href="https://www.forbes.com/sites/digital-assets/2024/12/06/the-logic-behind-bitcoins-power-law/" target="_blank" rel="noreferrer">Forbes overview</a>, <a href="https://coincodex.com/crypto/bitcoin/historical-data/" target="_blank" rel="noreferrer">CoinCodex historical prices</a>.</p>
         </section>
       </aside>
@@ -614,10 +616,13 @@
       floorMult: document.getElementById("floorMult"),
       upperMult: document.getElementById("upperMult"),
       showBands: document.getElementById("showBands"),
-      showHistory: document.getElementById("showHistory")
+      showHistory: document.getElementById("showHistory"),
+      showLive: document.getElementById("showLive")
     };
     let eventsWired = false;
     let liveQuoteTimer = null;
+    let lastHistoryAttempt = 0;
+    let refreshInProgress = false;
 
     function daysSinceGenesis(ms) {
       return Math.max(1, (ms - GENESIS) / DAY);
@@ -641,7 +646,7 @@
     }
 
     function dateLabel(ms) {
-      return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(ms));
+      return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(ms));
     }
 
     function timeLabel(ms) {
@@ -715,10 +720,10 @@
     function normalizeDaily(rows) {
       const byDay = new Map();
       const latestComplete = latestCompleteUtcDay();
-      for (const row of rows) {
+      for (const row of [...rows].filter(Boolean).sort((a, b) => a.t - b.t)) {
         if (!Number.isFinite(row.t) || !Number.isFinite(row.price) || row.price <= 0) continue;
         const day = utcDay(row.t);
-        if (day > latestComplete) continue;
+        if (day < GENESIS || day > latestComplete) continue;
         byDay.set(day, { t: day, price: row.price, source: row.source });
       }
       return [...byDay.values()].sort((a, b) => a.t - b.t);
@@ -757,7 +762,7 @@
     function cacheNeedsRefresh(cache) {
       if (!cache || !cache.history.length) return true;
       const latestCachedDay = cache.history[cache.history.length - 1].t;
-      return latestCachedDay < latestCompleteUtcDay();
+      return latestCachedDay < latestCompleteUtcDay() || cache.history.some((d, i, rows) => i && d.t - rows[i - 1].t > DAY);
     }
 
     async function fetchJson(url, timeoutMs = 12000) {
@@ -817,6 +822,7 @@
         try {
           const history = await loader();
           if (history.length < 100) throw new Error("Not enough rows returned");
+          if (history.at(-1).t < latestCompleteUtcDay()) throw new Error("History is not current through the last complete UTC day");
           return { history, source: name, limited: false, errors };
         } catch (error) {
           errors.push(`${name}: ${error.message}`);
@@ -831,6 +837,7 @@
     }
 
     async function loadHistoricalLayer(forceRefresh = false) {
+      lastHistoryAttempt = Date.now();
       const cache = loadHistoryCache();
       if (!forceRefresh && cache && !cacheNeedsRefresh(cache)) {
         const latest = cache.history[cache.history.length - 1];
@@ -845,6 +852,8 @@
 
       const result = await fetchFreshHistory();
       if (!result.limited) {
+        // Retain older cached observations when a provider returns a shorter window.
+        result.history = normalizeDaily([...(cache?.history || []), ...result.history]);
         saveHistoryCache(result.history, result.source);
         const latest = result.history[result.history.length - 1];
         state.cacheStatus = `${forceRefresh ? "Manual refresh loaded" : "Historical cache refreshed"}: ${result.history.length.toLocaleString()} daily closes through ${dateLabel(latest.t)}.`;
@@ -854,7 +863,7 @@
         return {
           history: cache.history,
           source: `${cache.source} stale cache`,
-          limited: false,
+          limited: true,
           errors: result.errors
         };
       } else {
@@ -870,7 +879,7 @@
       if (!Number.isFinite(data.usd)) throw new Error("Unexpected CoinGecko quote response");
       return {
         price: data.usd,
-        t: Number.isFinite(data.last_updated_at) ? data.last_updated_at * 1000 : Date.now(),
+        t: data.last_updated_at * 1000,
         source: "CoinGecko live spot"
       };
     }
@@ -897,7 +906,9 @@
       const errors = [];
       for (const loader of providers) {
         try {
-          return await loader();
+          const quote = await loader();
+          if (!isFreshQuote(quote)) throw new Error("Invalid or stale quote timestamp/price");
+          return quote;
         } catch (error) {
           errors.push(error.message);
         }
@@ -914,9 +925,27 @@
         draw();
       } catch (error) {
         state.liveError = error.message;
+        if (!isFreshQuote(state.liveQuote)) state.liveQuote = null;
         updateSummary();
         updateAudit();
+        draw();
       }
+    }
+
+    function isFreshQuote(quote, now = Date.now()) {
+      return !!quote && Number.isFinite(quote.price) && quote.price > 0 &&
+        Number.isFinite(quote.t) && quote.t <= now + 60000 && now - quote.t <= 10 * 60000;
+    }
+
+    function marketSeries(history = state.history, quote = state.liveQuote) {
+      const rows = normalizeDaily(history);
+      if (isFreshQuote(quote) && (!rows.length || quote.t > rows.at(-1).t)) rows.push({ ...quote, live: true });
+      return rows;
+    }
+
+    function hasMarketGap(previous, next) {
+      return utcDay(next.t) - utcDay(previous.t) > DAY ||
+        /BTCUSDT/.test(previous.source || "") !== /BTCUSDT/.test(next.source || "");
     }
 
     function getLatestPoint() {
@@ -925,32 +954,6 @@
 
     function getCurrentMetricPoint() {
       return state.liveQuote || getLatestPoint();
-    }
-
-    function updateSummaryLegacy() {
-      const latest = getCurrentMetricPoint();
-      const fair = fairValue(latest.t);
-      els.fairValue.textContent = money(fair);
-      els.todayFloor.textContent = money(fair * state.model.floor);
-      els.todayUpper.textContent = money(fair * state.model.upper);
-      if (!Number.isFinite(latest.price)) {
-        els.spotPrice.textContent = "--";
-        els.spotDate.textContent = state.liveError ? `Live quote unavailable; ${state.dataError || "no fallback price"}` : (state.dataError || "No verified market data");
-        els.deviation.textContent = "--";
-        els.zoneLabel.textContent = "No price classification";
-        els.zoneLabel.className = "";
-        els.oscillator.textContent = "--";
-        return;
-      }
-      const dev = (latest.price / fair - 1) * 100;
-      const [zone, zoneClass] = zoneFor(latest.price, fair);
-      els.spotPrice.textContent = money(latest.price);
-      els.spotDate.textContent = latest.source ? `${dateLabel(latest.t)} · ${latest.source}` : `${dateLabel(latest.t)} · ${state.dataSource}`;
-      els.fairValue.textContent = money(fair);
-      els.deviation.textContent = pct(dev);
-      els.zoneLabel.textContent = zone;
-      els.zoneLabel.className = zoneClass;
-      els.oscillator.textContent = Math.round(oscillator(latest.price, fair)) + "/100";
     }
 
     function updateSummary() {
@@ -999,8 +1002,15 @@
         ? `<br><strong>Live quote:</strong> ${money(state.liveQuote.price)} from ${state.liveQuote.source}, updated ${timeLabel(state.liveQuote.t)}.`
         : `<br><strong>Live quote:</strong> unavailable${state.liveError ? ` - ${state.liveError}` : ""}.`;
       const cache = state.cacheStatus ? `<br><strong>Historical cache:</strong> ${state.cacheStatus}` : "";
+      const quoteWarning = state.liveError && state.liveQuote ? "<br><strong>Quote refresh failed:</strong> retaining the last quote for at most 10 minutes." : "";
+      const rows = marketSeries();
+      const gaps = rows.filter((d, i) => i && hasMarketGap(rows[i - 1], d)).length;
+      els.status.textContent = state.liveQuote ? (gaps || state.dataError ? "Live quote; history gaps/limits" : "History + live quote") : "Historical data; live unavailable";
+      els.dot.classList.toggle("live", !!state.liveQuote && !gaps && !state.dataError);
+      els.dot.classList.toggle("error", !state.liveQuote || !!gaps || !!state.dataError);
+      const continuity = `<br><strong>Series:</strong> ${rows.length.toLocaleString()} points; ${gaps} breaks for missing days or USD/USDT changes. No interpolation.`;
       const policy = `<br><strong>Refresh policy:</strong> live quote updates every minute; historical daily closes refresh when cached history is older than the latest completed UTC day, or when you press Refresh data now.`;
-      els.auditBox.innerHTML = `<strong>Historical source:</strong> ${state.dataSource}${latestText}${auditText}${live}${cache}${policy}${mode}`;
+      els.auditBox.innerHTML = `<strong>Historical source:</strong> ${state.dataSource}${latestText}${auditText}${live}${quoteWarning}${cache}${continuity}${policy}${mode}`;
     }
 
     function updateProjection() {
@@ -1041,7 +1051,7 @@
       const start = new Date("2010-07-01T00:00:00Z").getTime();
       const end = Date.UTC(state.horizonYear, 11, 31);
       const series = modelSeries(start, end, 20);
-      const history = state.history.filter((d) => d.t >= start && d.t <= end);
+      const history = marketSeries().filter((d) => d.t >= start && d.t <= end);
       const bounds = getBounds(series, history, end);
       const logMin = Math.log10(bounds.yMin);
       const logMax = Math.log10(bounds.yMax);
@@ -1078,7 +1088,7 @@
         ctx.fill();
       }
 
-      if (state.liveQuote && state.liveQuote.t >= start && state.liveQuote.t <= end) {
+      if (els.showLive.checked && state.liveQuote && state.liveQuote.t >= start && state.liveQuote.t <= end) {
         const lx = x(state.liveQuote.t);
         const ly = y(state.liveQuote.price);
         ctx.fillStyle = "#ffffff";
@@ -1116,7 +1126,8 @@
 
       const startYear = new Date(start).getUTCFullYear();
       const endYear = new Date(end).getUTCFullYear();
-      for (let year = Math.ceil(startYear / 2) * 2; year <= endYear; year += 2) {
+      const yearStep = Math.max(2, Math.ceil((endYear - startYear) * 52 / (w - pad.l - pad.r) / 2) * 2);
+      for (let year = Math.ceil(startYear / yearStep) * yearStep; year <= endYear; year += yearStep) {
         const xx = x(Date.UTC(year, 0, 1));
         ctx.beginPath();
         ctx.moveTo(xx, pad.t);
@@ -1148,7 +1159,7 @@
       rows.forEach((d, i) => {
         const px = x(d.t);
         const py = y(d[key]);
-        if (i === 0) ctx.moveTo(px, py);
+        if (i === 0 || (key === "price" && hasMarketGap(rows[i - 1], d))) ctx.moveTo(px, py);
         else ctx.lineTo(px, py);
       });
       ctx.strokeStyle = color;
@@ -1201,7 +1212,7 @@
       ctx.arc(xx, y(fair), 3.5, 0, Math.PI * 2);
       ctx.fill();
 
-      const priceText = Number.isFinite(nearest.price) ? `<br>BTC close: ${money(nearest.price)}<br>Source: ${nearest.source || state.dataSource}` : "";
+      const priceText = Number.isFinite(nearest.price) && Math.abs(nearest.t - clamped) <= DAY ? `<br>${nearest.live ? "Live spot" : "BTC daily price"} (${dateLabel(nearest.t)}): ${money(nearest.price)}<br>Source: ${nearest.source || state.dataSource}` : "";
       els.tooltip.innerHTML = `<b>${dateLabel(clamped)}</b><br>Fair value: ${money(fair)}<br>Floor: ${money(fair * state.model.floor)}<br>Upper: ${money(fair * state.model.upper)}${priceText}`;
       els.tooltip.style.left = Math.min(w - 300, Math.max(8, hover.x)) + "px";
       els.tooltip.style.top = Math.min(h - 150, Math.max(8, hover.y)) + "px";
@@ -1214,17 +1225,19 @@
 
       for (const input of [els.coefA, els.coefB, els.floorMult, els.upperMult]) {
         input.addEventListener("input", () => {
-          state.model.a = Number(els.coefA.value) || 1.6e-17;
-          state.model.b = Number(els.coefB.value) || 5.77;
-          state.model.floor = Number(els.floorMult.value) || 0.42;
-          state.model.upper = Math.max(2.1, Number(els.upperMult.value) || 3);
+          const a = Number(els.coefA.value), b = Number(els.coefB.value);
+          const floor = Number(els.floorMult.value), upper = Number(els.upperMult.value);
+          if (!(a > 0 && b > 0 && floor >= 0.05 && floor <= 0.7 && upper >= 2.1 && upper <= 10) ||
+              !Number.isFinite(a * Math.pow(daysSinceGenesis(Date.UTC(2046, 0, 1)), b)) ||
+              a * Math.pow(daysSinceGenesis(Date.UTC(2010, 6, 1)), b) <= 0) return;
+          state.model = { a, b, floor, upper };
           updateSummary();
           updateProjection();
           draw();
         });
       }
 
-      for (const input of [els.showBands, els.showHistory]) {
+      for (const input of [els.showBands, els.showHistory, els.showLive]) {
         input.addEventListener("change", draw);
       }
 
@@ -1288,7 +1301,22 @@
       draw();
       await refreshLiveQuote();
       if (!liveQuoteTimer) {
-        liveQuoteTimer = setInterval(refreshLiveQuote, LIVE_QUOTE_REFRESH_MS);
+        liveQuoteTimer = setInterval(async () => {
+          await refreshLiveQuote();
+          if (!refreshInProgress && Date.now() - lastHistoryAttempt >= 3600000 &&
+              getLatestPoint().t < latestCompleteUtcDay()) {
+            refreshInProgress = true;
+            try {
+            const result = await loadHistoricalLayer();
+            state.history = result.history;
+            state.dataSource = result.source;
+            state.dataError = result.limited ? result.errors.join("; ") : "";
+            updateSummary(); updateAudit(); draw();
+            } finally {
+              refreshInProgress = false;
+            }
+          }
+        }, LIVE_QUOTE_REFRESH_MS);
       }
     }
 
