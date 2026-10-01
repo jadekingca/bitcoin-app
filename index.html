@@ -565,8 +565,8 @@
 
         <section class="panel">
           <h2>Sources</h2>
-          <p class="note">The referenced TradingView script describes a log10 regression corridor with deep value, value, hot, and mania zones. Historical daily closes are cached locally in this browser; live spot is appended at its quote timestamp. Lines break across missing UTC days. CoinGecko daily samples are midnight observations, not exchange candle closes; Binance BTCUSDT is a USDT proxy.</p>
-          <p class="note">References: <a href="https://www.tradingview.com/script/UdkfiWmJ/" target="_blank" rel="noreferrer">TradingView script</a>, <a href="https://www.forbes.com/sites/digital-assets/2024/12/06/the-logic-behind-bitcoins-power-law/" target="_blank" rel="noreferrer">Forbes overview</a>, <a href="https://coincodex.com/crypto/bitcoin/historical-data/" target="_blank" rel="noreferrer">CoinCodex historical prices</a>.</p>
+          <p class="note">The referenced TradingView script describes a log10 regression corridor with deep value, value, hot, and mania zones. Coin Metrics supplies older daily USD reference prices; Coinbase daily closes update recent history, with Kraken and CoinGecko fallbacks. Reference prices and CoinGecko samples are not exchange candle closes. Only completed UTC days are cached. Live spot is appended at its timestamp; genuine missing days remain visible.</p>
+          <p class="note">Data: <a href="https://coinmetrics.io/" target="_blank" rel="noreferrer">Coin Metrics</a>, <a href="https://www.coinbase.com/" target="_blank" rel="noreferrer">Coinbase</a>, <a href="https://www.kraken.com/" target="_blank" rel="noreferrer">Kraken</a>. References: <a href="https://www.tradingview.com/script/UdkfiWmJ/" target="_blank" rel="noreferrer">TradingView script</a>, <a href="https://www.forbes.com/sites/digital-assets/2024/12/06/the-logic-behind-bitcoins-power-law/" target="_blank" rel="noreferrer">Forbes overview</a>, <a href="https://coincodex.com/crypto/bitcoin/historical-data/" target="_blank" rel="noreferrer">CoinCodex historical prices</a>.</p>
         </section>
       </aside>
     </section>
@@ -622,7 +622,6 @@
     let eventsWired = false;
     let liveQuoteTimer = null;
     let lastHistoryAttempt = 0;
-    let refreshInProgress = false;
 
     function daysSinceGenesis(ms) {
       return Math.max(1, (ms - GENESIS) / DAY);
@@ -710,166 +709,113 @@
       return rows;
     }
 
-    const AUDITED_RECENT_HISTORY = [
-      { t: Date.UTC(2026, 4, 27), price: 74410, source: "CoinCodex daily close" },
-      { t: Date.UTC(2026, 4, 28), price: 73554, source: "CoinCodex daily close" },
-      { t: Date.UTC(2026, 4, 29), price: 73476, source: "CoinCodex May 29 daily close" },
-      { t: Date.UTC(2026, 4, 30), price: 73868, source: "CoinCodex daily close" }
-    ];
-
-    function normalizeDaily(rows) {
+    // A historical row is keyed by its UTC date; live quotes retain exact timestamps.
+    function normalizeDaily(rows, now = Date.now()) {
       const byDay = new Map();
-      const latestComplete = latestCompleteUtcDay();
-      for (const row of [...rows].filter(Boolean).sort((a, b) => a.t - b.t)) {
+      for (const row of (Array.isArray(rows) ? rows : []).filter(Boolean).sort((a,b) => a.t-b.t)) {
         if (!Number.isFinite(row.t) || !Number.isFinite(row.price) || row.price <= 0) continue;
         const day = utcDay(row.t);
-        if (day < GENESIS || day > latestComplete) continue;
-        byDay.set(day, { t: day, price: row.price, source: row.source });
+        if (day < GENESIS || day > latestCompleteUtcDay(now)) continue;
+        byDay.set(day, { t: day, price: row.price, source: String(row.source || "Cached daily price") });
       }
-      return [...byDay.values()].sort((a, b) => a.t - b.t);
+      return [...byDay.values()].sort((a,b) => a.t-b.t);
     }
 
     function loadHistoryCache() {
       try {
-        const raw = localStorage.getItem(HISTORY_CACHE_KEY);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        const history = normalizeDaily(parsed.history || []);
-        if (!history.length) return null;
-        return {
-          history,
-          source: parsed.source || "Browser cache",
-          savedAt: parsed.savedAt || 0
-        };
-      } catch {
-        return null;
-      }
+        const parsed = JSON.parse(localStorage.getItem(HISTORY_CACHE_KEY) || "null");
+        if (!parsed) return null;
+        const history = normalizeDaily(parsed.history);
+        return history.length ? { history, source: parsed.source, savedAt: Number(parsed.savedAt) || 0 } : null;
+      } catch { return null; }
     }
 
     function saveHistoryCache(history, source) {
-      if (!history.length || history === AUDITED_RECENT_HISTORY) return;
       try {
-        localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify({
-          history,
-          source,
-          savedAt: Date.now()
-        }));
-      } catch {
-        state.cacheStatus = "Historical cache could not be saved in this browser.";
-      }
+        localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify({history, source, savedAt: Date.now()}));
+        return true;
+      } catch { return false; }
+    }
+
+    function missingDays(rows) {
+      return rows.reduce((n,d,i) => n + (i ? Math.max(0, Math.round((d.t-rows[i-1].t)/DAY)-1) : 0), 0);
     }
 
     function cacheNeedsRefresh(cache) {
-      if (!cache || !cache.history.length) return true;
-      const latestCachedDay = cache.history[cache.history.length - 1].t;
-      return latestCachedDay < latestCompleteUtcDay() || cache.history.some((d, i, rows) => i && d.t - rows[i - 1].t > DAY);
+      return !cache?.history?.length || cache.history.at(-1).t < latestCompleteUtcDay() || missingDays(cache.history) > 0;
     }
 
     async function fetchJson(url, timeoutMs = 12000) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const res = await fetch(url, { cache: "no-store", signal: controller.signal });
-        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-        return await res.json();
-      } finally {
-        clearTimeout(timer);
-      }
+        const response = await fetch(url, {cache: "no-store", signal: controller.signal});
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return await response.json();
+      } finally { clearTimeout(timer); }
     }
 
-    async function fetchCoinGeckoHistory() {
-      const url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=max&interval=daily";
-      const json = await fetchJson(url);
-      return normalizeDaily(json.prices.map(([t, price]) => ({ t, price, source: "CoinGecko daily" })));
+    async function fetchCoinMetricsHistory() {
+      const json = await fetchJson("https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=btc&metrics=PriceUSD&frequency=1d&page_size=10000&start_time=2010-07-01", 15000);
+      if (!Array.isArray(json.data) || json.next_page_url) throw new Error("Incomplete Coin Metrics history response");
+      return normalizeDaily(json.data.map(d => ({t: Date.parse(d.time), price: Number(d.PriceUSD), source: "Coin Metrics daily USD reference"})));
     }
 
-    async function fetchCryptoCompareHistory() {
-      const url = "https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&allData=true";
-      const json = await fetchJson(url);
-      if (!json.Data || !Array.isArray(json.Data.Data)) throw new Error("Unexpected CryptoCompare response");
-      return normalizeDaily(json.Data.Data.map((d) => ({
-        t: d.time * 1000,
-        price: d.close,
-        source: "CryptoCompare daily close"
-      })));
+    async function fetchCoinbaseHistory() {
+      const json = await fetchJson("https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=86400");
+      if (!Array.isArray(json)) throw new Error("Invalid Coinbase candles");
+      return normalizeDaily(json.filter(Array.isArray).map(d => ({t: Number(d[0])*1000, price: Number(d[4]), source: "Coinbase BTC-USD daily close"})));
     }
 
-    async function fetchBinanceHistory() {
-      const rows = [];
-      let startTime = Date.UTC(2017, 7, 17);
-      const endTime = Date.now();
-      while (startTime < endTime) {
-        const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&startTime=${startTime}&limit=1000`;
-        const json = await fetchJson(url);
-        if (!Array.isArray(json) || json.length === 0) break;
-        rows.push(...json.map((d) => ({ t: d[0], price: Number(d[4]), source: "Binance BTCUSDT daily close" })));
-        const last = json[json.length - 1][0];
-        if (last <= startTime) break;
-        startTime = last + DAY;
-        if (rows.length > 5000) break;
-      }
-      return normalizeDaily(rows);
+    async function fetchKrakenHistory() {
+      const json = await fetchJson("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1440");
+      if (json.error?.length) throw new Error(json.error.join("; "));
+      const rows = Object.entries(json.result || {}).find(([key,value]) => key !== "last" && Array.isArray(value))?.[1];
+      if (!rows) throw new Error("Invalid Kraken candles");
+      return normalizeDaily(rows.map(d => ({t: Number(d[0])*1000, price: Number(d[4]), source: "Kraken BTC-USD daily close"})));
     }
 
-    async function fetchFreshHistory() {
-      const providers = [
-        ["CoinGecko daily", fetchCoinGeckoHistory],
-        ["CryptoCompare daily close", fetchCryptoCompareHistory],
-        ["Binance BTCUSDT daily close", fetchBinanceHistory]
-      ];
-      const errors = [];
-      for (const [name, loader] of providers) {
-        try {
-          const history = await loader();
-          if (history.length < 100) throw new Error("Not enough rows returned");
-          if (history.at(-1).t < latestCompleteUtcDay()) throw new Error("History is not current through the last complete UTC day");
-          return { history, source: name, limited: false, errors };
-        } catch (error) {
-          errors.push(`${name}: ${error.message}`);
-        }
-      }
-      return {
-        history: AUDITED_RECENT_HISTORY,
-        source: "Audited static May 2026 anchors",
-        limited: true,
-        errors
-      };
+    async function fetchRecentCoinGeckoHistory() {
+      const json = await fetchJson("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=365&interval=daily");
+      if (!Array.isArray(json.prices)) throw new Error("Invalid CoinGecko daily samples");
+      return normalizeDaily(json.prices.map(d => ({t: Number(d[0]), price: Number(d[1]), source: "CoinGecko daily USD sample"})));
     }
 
+    // Merge useful partial data, even if it does not reach yesterday yet.
+    // Daily closes take precedence over older cached/reference observations.
     async function loadHistoricalLayer(forceRefresh = false) {
-      lastHistoryAttempt = Date.now();
       const cache = loadHistoryCache();
-      if (!forceRefresh && cache && !cacheNeedsRefresh(cache)) {
-        const latest = cache.history[cache.history.length - 1];
-        state.cacheStatus = `Historical cache hit: ${cache.history.length.toLocaleString()} daily closes through ${dateLabel(latest.t)}.`;
-        return {
-          history: cache.history,
-          source: `${cache.source} cache`,
-          limited: false,
-          errors: []
+      let history = normalizeDaily([...(cache?.history || []), ...state.history]);
+      const errors = [];
+      const needsBackfill = !history.length || history[0].t > Date.UTC(2010,7,1) || missingDays(history) > 0;
+      const due = Date.now()-lastHistoryAttempt >= (cacheNeedsRefresh({history}) ? 5*60000 : 3600000);
+      if (forceRefresh || due || !lastHistoryAttempt) {
+        lastHistoryAttempt = Date.now();
+        const merge = async (name, loader, preferExisting = false) => {
+          try {
+            const rows = await loader();
+            if (!rows.length) throw new Error("No completed daily prices");
+            history = normalizeDaily(preferExisting ? [...rows,...history] : [...history,...rows]);
+            return true;
+          } catch (error) {
+            const message = name + ": " + error.message;
+            errors.push(message);
+            console.warn("[btc-history]", message);
+            return false;
+          }
         };
+        if (needsBackfill) await merge("Coin Metrics", fetchCoinMetricsHistory, true);
+        for (const [name, loader] of [["Coinbase",fetchCoinbaseHistory],["Kraken",fetchKrakenHistory],["CoinGecko",fetchRecentCoinGeckoHistory]]) {
+          const ok = await merge(name,loader);
+          if (ok && !cacheNeedsRefresh({history})) break;
+        }
+        const saved = history.length && saveHistoryCache(history,"Mixed USD daily sources");
+        state.cacheStatus = saved ? "Validated daily prices saved in this browser." : "Cache unavailable; keeping data in memory.";
       }
-
-      const result = await fetchFreshHistory();
-      if (!result.limited) {
-        // Retain older cached observations when a provider returns a shorter window.
-        result.history = normalizeDaily([...(cache?.history || []), ...result.history]);
-        saveHistoryCache(result.history, result.source);
-        const latest = result.history[result.history.length - 1];
-        state.cacheStatus = `${forceRefresh ? "Manual refresh loaded" : "Historical cache refreshed"}: ${result.history.length.toLocaleString()} daily closes through ${dateLabel(latest.t)}.`;
-      } else if (cache && cache.history.length) {
-        const latest = cache.history[cache.history.length - 1];
-        state.cacheStatus = `Using stale historical cache through ${dateLabel(latest.t)} because live history providers failed.`;
-        return {
-          history: cache.history,
-          source: `${cache.source} stale cache`,
-          limited: true,
-          errors: result.errors
-        };
-      } else {
-        state.cacheStatus = "No full historical cache exists yet; using limited audited anchors.";
-      }
-      return result;
+      const stale = !history.length || history.at(-1).t < latestCompleteUtcDay();
+      const limited = stale || missingDays(history)>0;
+      if (stale) errors.push("Historical prices do not yet reach the latest completed UTC day.");
+      return {history, source: "USD daily prices (per-point source shown on hover)", limited, errors};
     }
 
     async function fetchCoinGeckoQuote() {
@@ -884,24 +830,15 @@
       };
     }
 
-    async function fetchBinanceQuote() {
-      const json = await fetchJson("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", 8000);
-      const price = Number(json.price);
-      if (!Number.isFinite(price)) throw new Error("Unexpected Binance quote response");
-      return { price, t: Date.now(), source: "Binance BTCUSDT live spot" };
-    }
-
-    async function fetchCryptoCompareQuote() {
-      const json = await fetchJson("https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD", 8000);
-      if (!Number.isFinite(json.USD)) throw new Error("Unexpected CryptoCompare quote response");
-      return { price: json.USD, t: Date.now(), source: "CryptoCompare live spot" };
+    async function fetchCoinbaseQuote() {
+      const json = await fetchJson("https://api.exchange.coinbase.com/products/BTC-USD/ticker",8000);
+      return {price: Number(json.price), t: Date.parse(json.time), source: "Coinbase BTC-USD live spot"};
     }
 
     async function fetchLiveQuote() {
       const providers = [
         fetchCoinGeckoQuote,
-        fetchBinanceQuote,
-        fetchCryptoCompareQuote
+        fetchCoinbaseQuote
       ];
       const errors = [];
       for (const loader of providers) {
@@ -920,15 +857,9 @@
       try {
         state.liveQuote = await fetchLiveQuote();
         state.liveError = "";
-        updateSummary();
-        updateAudit();
-        draw();
       } catch (error) {
         state.liveError = error.message;
         if (!isFreshQuote(state.liveQuote)) state.liveQuote = null;
-        updateSummary();
-        updateAudit();
-        draw();
       }
     }
 
@@ -985,32 +916,28 @@
       els.oscillator.textContent = Math.round(oscillator(latest.price, fair)) + "/100";
     }
 
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    }
+
     function updateAudit() {
-      const may29 = Date.UTC(2026, 4, 29);
-      const point = state.history.find((d) => d.t === may29);
-      const latest = getLatestPoint();
-      const anchor = 73476;
-      const diff = point ? ((point.price / anchor - 1) * 100) : NaN;
-      const latestText = Number.isFinite(latest.price)
-        ? `<br><strong>Latest historical close:</strong> ${money(latest.price)} on ${dateLabel(latest.t)}.`
-        : `<br><strong>Latest historical close:</strong> unavailable.`;
-      const auditText = point
-        ? `<br><strong>May 29 checkpoint:</strong> source loaded ${money(point.price)} vs CoinCodex reference ${money(anchor)} (${Number.isFinite(diff) ? diff.toFixed(2) + "%" : "n/a"}).`
-        : `<br><strong>May 29 checkpoint:</strong> this source does not include the reference day yet; CoinCodex reference is ${money(anchor)}.`;
-      const mode = state.dataError ? `<br><br><strong>Loader note:</strong> ${state.dataError}` : "";
-      const live = state.liveQuote
-        ? `<br><strong>Live quote:</strong> ${money(state.liveQuote.price)} from ${state.liveQuote.source}, updated ${timeLabel(state.liveQuote.t)}.`
-        : `<br><strong>Live quote:</strong> unavailable${state.liveError ? ` - ${state.liveError}` : ""}.`;
-      const cache = state.cacheStatus ? `<br><strong>Historical cache:</strong> ${state.cacheStatus}` : "";
-      const quoteWarning = state.liveError && state.liveQuote ? "<br><strong>Quote refresh failed:</strong> retaining the last quote for at most 10 minutes." : "";
       const rows = marketSeries();
-      const gaps = rows.filter((d, i) => i && hasMarketGap(rows[i - 1], d)).length;
-      els.status.textContent = state.liveQuote ? (gaps || state.dataError ? "Live quote; history gaps/limits" : "History + live quote") : "Historical data; live unavailable";
-      els.dot.classList.toggle("live", !!state.liveQuote && !gaps && !state.dataError);
-      els.dot.classList.toggle("error", !state.liveQuote || !!gaps || !!state.dataError);
-      const continuity = `<br><strong>Series:</strong> ${rows.length.toLocaleString()} points; ${gaps} breaks for missing days or USD/USDT changes. No interpolation.`;
-      const policy = `<br><strong>Refresh policy:</strong> live quote updates every minute; historical daily closes refresh when cached history is older than the latest completed UTC day, or when you press Refresh data now.`;
-      els.auditBox.innerHTML = `<strong>Historical source:</strong> ${state.dataSource}${latestText}${auditText}${live}${quoteWarning}${cache}${continuity}${policy}${mode}`;
+      const latest = getLatestPoint();
+      const gaps = rows.filter((d,i) => i && hasMarketGap(rows[i-1],d)).length;
+      const limited = !state.history.length || latest.t < latestCompleteUtcDay() || gaps > 0;
+      els.status.textContent = state.liveQuote ? (limited ? "Live quote; history gaps/limits" : "History + live quote") : "Live unavailable; showing daily prices";
+      els.dot.classList.toggle("live", !!state.liveQuote && !limited);
+      els.dot.classList.toggle("error", !state.liveQuote || limited);
+      const facts = [
+        ["Historical coverage",state.history.length ? state.history.length.toLocaleString()+" daily prices, "+dateLabel(state.history[0].t)+" through "+dateLabel(latest.t)+" UTC" : "Unavailable"],
+        ["Latest daily price",Number.isFinite(latest.price) ? money(latest.price)+" — "+latest.source : "Unavailable"],
+        ["Live quote",state.liveQuote ? money(state.liveQuote.price)+" — "+state.liveQuote.source+" — "+timeLabel(state.liveQuote.t) : "Unavailable"],
+        ["Continuity",gaps+" breaks; "+missingDays(state.history)+" missing internal days. No interpolation."],
+        ["Cache",state.cacheStatus],
+        ["Refresh policy","Spot every minute; daily prices checked hourly, or every 5 minutes while incomplete. Refresh now and returning to the tab also check for new data."],
+        ["Provider notes",[state.dataError,state.liveError].filter(Boolean).join("; ") || "No errors in the last refresh."]
+      ];
+      els.auditBox.innerHTML = facts.map(([label,value]) => "<strong>"+label+":</strong> "+escapeHtml(value)).join("<br>");
     }
 
     function updateProjection() {
@@ -1277,48 +1204,26 @@
       });
     }
 
-    async function init(options = {}) {
+    let marketRefresh = null;
+    function init(options = {}) {
+      if (marketRefresh) return marketRefresh;
       wireEvents();
       updateProjection();
-      try {
-        const result = await loadHistoricalLayer(Boolean(options.forceHistoryRefresh));
-        state.history = result.history;
-        state.dataSource = result.source;
-        state.dataError = result.limited ? result.errors.join("; ") : "";
-        els.status.textContent = result.limited ? "Limited audited history" : "Cached history + live quote";
-        els.dot.classList.toggle("live", !result.limited);
-        els.dot.classList.toggle("error", result.limited);
-      } catch (error) {
-        state.history = [];
-        state.dataSource = "No market data loaded";
-        state.dataError = error.message;
-        els.status.textContent = "Market data unavailable";
-        els.dot.classList.remove("live");
-        els.dot.classList.add("error");
-      }
-      updateSummary();
-      updateAudit();
-      draw();
-      await refreshLiveQuote();
-      if (!liveQuoteTimer) {
-        liveQuoteTimer = setInterval(async () => {
-          await refreshLiveQuote();
-          if (!refreshInProgress && Date.now() - lastHistoryAttempt >= 3600000 &&
-              getLatestPoint().t < latestCompleteUtcDay()) {
-            refreshInProgress = true;
-            try {
-            const result = await loadHistoricalLayer();
-            state.history = result.history;
-            state.dataSource = result.source;
-            state.dataError = result.limited ? result.errors.join("; ") : "";
-            updateSummary(); updateAudit(); draw();
-            } finally {
-              refreshInProgress = false;
-            }
-          }
-        }, LIVE_QUOTE_REFRESH_MS);
-      }
+      marketRefresh = (async () => {
+        // A single flight covers both manual and timer refreshes; older responses cannot overwrite newer data.
+        const historyJob = loadHistoricalLayer(Boolean(options.forceHistoryRefresh)).then(result => {
+          state.history = result.history;
+          state.dataSource = result.source;
+          state.dataError = result.errors.join("; ");
+        }).catch(error => {state.dataError=error.message;});
+        await Promise.allSettled([historyJob, refreshLiveQuote()]);
+        updateSummary(); updateAudit(); draw();
+      })().finally(() => {marketRefresh=null;});
+      if (!liveQuoteTimer) liveQuoteTimer=setInterval(() => init(),LIVE_QUOTE_REFRESH_MS);
+      return marketRefresh;
     }
+
+    document.addEventListener("visibilitychange", () => {if (!document.hidden) init();});
 
     init();
   </script>
