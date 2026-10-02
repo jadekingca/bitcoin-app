@@ -254,6 +254,19 @@
       font-weight: 700;
     }
 
+    .chart-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .reset-zoom {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      color: var(--ink);
+      padding: 8px 10px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .reset-zoom:disabled { opacity: 0.45; cursor: default; }
+    .chart-help { padding: 6px 12px; border-bottom: 1px solid var(--line); }
+
     .canvas-wrap {
       position: relative;
       height: min(68vh, 720px);
@@ -515,14 +528,18 @@
             <span class="zone-cycle"><i class="swatch"></i>Mania</span>
             <span style="color:#f5f7fb"><i class="swatch"></i>BTC history + spot</span>
           </div>
+          <div class="chart-controls">
           <div class="segmented" aria-label="Chart horizon">
             <button class="active" data-horizon="2036">2036</button>
             <button data-horizon="2040">2040</button>
             <button data-horizon="2045">2045</button>
           </div>
+          <button class="reset-zoom" id="resetZoom" type="button" disabled>Reset Zoom</button>
+          </div>
         </div>
+        <p class="note chart-help" id="chartHelp">Ctrl + mouse wheel to zoom · Drag to pan · 30-day minimum view</p>
         <div class="canvas-wrap" id="canvasWrap">
-          <canvas id="chart" aria-label="Bitcoin power law chart"></canvas>
+          <canvas id="chart" aria-label="Bitcoin power law chart" aria-describedby="chartHelp"></canvas>
           <div class="tooltip" id="tooltip"></div>
         </div>
       </div>
@@ -575,6 +592,9 @@
   <script>
     const GENESIS = new Date("2009-01-03T00:00:00Z").getTime();
     const DAY = 86400000;
+    const CHART_START = Date.UTC(2010, 6, 1);
+    const MIN_VIEW_SPAN = 30 * DAY;
+    const CHART_PAD = { l: 72, r: 28, t: 24, b: 48 };
     const HISTORY_CACHE_KEY = "bitcoin-power-law-history-cache-v1";
     const LIVE_QUOTE_REFRESH_MS = 60000;
     const state = {
@@ -586,6 +606,8 @@
       liveError: "",
       horizonYear: 2036,
       hover: null,
+      viewport: null,
+      drag: null,
       model: {
         a: 1.6e-17,
         b: 5.77,
@@ -598,6 +620,7 @@
       canvas: document.getElementById("chart"),
       wrap: document.getElementById("canvasWrap"),
       tooltip: document.getElementById("tooltip"),
+      resetZoom: document.getElementById("resetZoom"),
       status: document.getElementById("statusText"),
       dot: document.getElementById("statusDot"),
       spotPrice: document.getElementById("spotPrice"),
@@ -693,7 +716,8 @@
     function modelSeries(startMs, endMs, stepDays = 30) {
       const bands = bandMultipliers();
       const rows = [];
-      for (let t = startMs; t <= endMs; t += stepDays * DAY) {
+      // Include both edges even when the visible span is shorter than a sample step.
+      for (let t = startMs; ; t = Math.min(endMs, t + stepDays * DAY)) {
         const fair = fairValue(t);
         rows.push({
           t,
@@ -705,6 +729,7 @@
           upper: fair * bands.upper,
           mania: fair * bands.mania
         });
+        if (t === endMs) break;
       }
       return rows;
     }
@@ -949,18 +974,79 @@
       }).join("");
     }
 
-    function getBounds(series, history, endMs) {
+    function fullViewport() {
+      return { start: CHART_START, end: Date.UTC(state.horizonYear, 11, 31) };
+    }
+
+    function clampViewport(start, end) {
+      const full = fullViewport();
+      const span = Math.min(full.end - full.start, Math.max(MIN_VIEW_SPAN, end - start));
+      const boundedStart = Math.max(full.start, Math.min(full.end - span, start));
+      return { start: boundedStart, end: boundedStart + span };
+    }
+
+    function clearHover() {
+      state.hover = null;
+      els.tooltip.classList.remove("visible");
+      // A hidden tooltip must not retain a desktop offset after a narrow resize.
+      els.tooltip.style.left = "0px";
+      els.tooltip.style.top = "0px";
+    }
+
+    function setViewport(start, end) {
+      const view = clampViewport(start, end);
+      const full = fullViewport();
+      state.viewport = view.start === full.start && view.end === full.end ? null : view;
+      clearHover();
+      draw();
+    }
+
+    function endPan() {
+      const drag = state.drag;
+      state.drag = null;
+      if (drag && els.canvas.hasPointerCapture(drag.id)) els.canvas.releasePointerCapture(drag.id);
+      els.canvas.style.cursor = state.viewport ? "grab" : "default";
+    }
+
+    function resetZoom() {
+      endPan();
+      state.viewport = null;
+      clearHover();
+      draw();
+    }
+
+    function chartPoint(event) {
+      const rect = els.wrap.getBoundingClientRect();
+      const x = event.clientX - rect.left, y = event.clientY - rect.top;
+      return { x, y, width: Math.max(1, rect.width - CHART_PAD.l - CHART_PAD.r),
+        inside: x >= CHART_PAD.l && x <= rect.width - CHART_PAD.r &&
+          y >= CHART_PAD.t && y <= rect.height - CHART_PAD.b };
+    }
+
+    function getBounds(series, history, startMs, endMs) {
       const values = [];
       for (const d of series) {
-        values.push(d.floor, d.mania);
+        values.push(d.floor, els.showBands.checked ? d.mania : d.upper);
       }
-      for (const d of history) {
-        if (d.t <= endMs) values.push(d.price);
+      if (els.showHistory.checked) {
+        for (let i = 0; i < history.length; i++) {
+          const d = history[i], previous = history[i - 1];
+          if (d.t >= startMs && d.t <= endMs) values.push(d.price);
+          // Include line intersections at the viewport edges, but never bridge data gaps.
+          if (!previous || hasMarketGap(previous, d)) continue;
+          for (const edge of [startMs, endMs]) {
+            if (previous.t < edge && d.t > edge) {
+              const fraction = (edge - previous.t) / (d.t - previous.t);
+              values.push(10 ** (Math.log10(previous.price) + fraction * (Math.log10(d.price) - Math.log10(previous.price))));
+            }
+          }
+        }
       }
-      if (state.liveQuote && state.liveQuote.t <= endMs) values.push(state.liveQuote.price);
+      if (els.showLive.checked && state.liveQuote && state.liveQuote.t >= startMs && state.liveQuote.t <= endMs) values.push(state.liveQuote.price);
+      const positive = values.filter(v => Number.isFinite(v) && v > 0);
       return {
-        yMin: Math.min(...values.filter(Number.isFinite)) * 0.72,
-        yMax: Math.max(...values.filter(Number.isFinite)) * 1.22
+        yMin: Math.min(...positive) * 0.72,
+        yMax: Math.max(...positive) * 1.22
       };
     }
 
@@ -974,12 +1060,17 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const w = rect.width;
       const h = rect.height;
-      const pad = { l: 72, r: 28, t: 24, b: 48 };
-      const start = new Date("2010-07-01T00:00:00Z").getTime();
-      const end = Date.UTC(state.horizonYear, 11, 31);
-      const series = modelSeries(start, end, 20);
-      const history = marketSeries().filter((d) => d.t >= start && d.t <= end);
-      const bounds = getBounds(series, history, end);
+      const pad = CHART_PAD;
+      const { start, end } = state.viewport || fullViewport();
+      els.resetZoom.disabled = !state.viewport;
+      canvas.style.cursor = state.drag ? "grabbing" : state.viewport ? "grab" : "default";
+      const series = modelSeries(start, end, Math.min(20, (end - start) / DAY / 100));
+      const allHistory = marketSeries();
+      const history = allHistory.filter((d, i) =>
+        (d.t >= start && d.t <= end) ||
+        (d.t < start && allHistory[i + 1]?.t >= start) ||
+        (d.t > end && allHistory[i - 1]?.t <= end));
+      const bounds = getBounds(series, history, start, end);
       const logMin = Math.log10(bounds.yMin);
       const logMax = Math.log10(bounds.yMax);
       const x = (t) => pad.l + ((t - start) / (end - start)) * (w - pad.l - pad.r);
@@ -990,6 +1081,11 @@
       ctx.fillRect(0, 0, w, h);
 
       drawGrid(ctx, w, h, pad, x, y, start, end, logMin, logMax);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(pad.l, pad.t, w - pad.l - pad.r, h - pad.t - pad.b);
+      ctx.clip();
 
       if (els.showBands.checked) {
         fillBand(ctx, series, x, y, "floor", "deep", "rgba(74,168,255,0.22)");
@@ -1032,6 +1128,7 @@
       if (state.hover) {
         drawHover(ctx, state.hover, x, y, w, h, pad, start, end, history);
       }
+      ctx.restore();
     }
 
     function drawGrid(ctx, w, h, pad, x, y, start, end, logMin, logMax) {
@@ -1040,7 +1137,10 @@
       ctx.fillStyle = "rgba(237,242,247,0.64)";
       ctx.font = "12px Inter, sans-serif";
 
-      const yTicks = [0.1, 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000];
+      const yTicks = [];
+      for (let power = Math.floor(logMin); power <= Math.ceil(logMax); power++) {
+        for (const multiple of logMax - logMin < 3 ? [1, 2, 5] : [1]) yTicks.push(multiple * 10 ** power);
+      }
       for (const v of yTicks) {
         if (Math.log10(v) < logMin || Math.log10(v) > logMax) continue;
         const yy = y(v);
@@ -1051,17 +1151,40 @@
         ctx.fillText(money(v), 10, yy + 4);
       }
 
-      const startYear = new Date(start).getUTCFullYear();
-      const endYear = new Date(end).getUTCFullYear();
-      const yearStep = Math.max(2, Math.ceil((endYear - startYear) * 52 / (w - pad.l - pad.r) / 2) * 2);
-      for (let year = Math.ceil(startYear / yearStep) * yearStep; year <= endYear; year += yearStep) {
-        const xx = x(Date.UTC(year, 0, 1));
+      const spanDays = (end - start) / DAY;
+      const maxTicks = Math.max(2, Math.floor((w - pad.l - pad.r) / 90));
+      const ticks = [];
+      const first = new Date(start);
+      if (spanDays > 730) {
+        const step = Math.max(1, Math.ceil(spanDays / 365.25 / maxTicks));
+        for (let year = Math.ceil(first.getUTCFullYear() / step) * step; Date.UTC(year, 0, 1) <= end; year += step) {
+          ticks.push([Date.UTC(year, 0, 1), String(year)]);
+        }
+      } else if (spanDays > 90) {
+        const step = Math.max(1, Math.ceil(spanDays / 30 / maxTicks));
+        const month = first.getUTCFullYear() * 12 + first.getUTCMonth();
+        for (let m = Math.ceil(month / step) * step; ; m += step) {
+          const t = Date.UTC(Math.floor(m / 12), m % 12, 1);
+          if (t > end) break;
+          ticks.push([t, new Date(t).toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" })]);
+        }
+      } else {
+        const step = Math.ceil(spanDays / maxTicks) * DAY;
+        for (let t = Math.ceil(start / step) * step; t <= end; t += step) {
+          ticks.push([t, new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })]);
+        }
+      }
+      ctx.textAlign = "center";
+      for (const [t, label] of ticks) {
+        if (t < start || t > end) continue;
+        const xx = x(t);
         ctx.beginPath();
         ctx.moveTo(xx, pad.t);
         ctx.lineTo(xx, h - pad.b);
         ctx.stroke();
-        ctx.fillText(String(year), xx - 13, h - 18);
+        ctx.fillText(label, xx, h - 18);
       }
+      ctx.textAlign = "left";
     }
 
     function fillBand(ctx, series, x, y, lower, upper, color) {
@@ -1173,23 +1296,58 @@
           document.querySelectorAll("[data-horizon]").forEach((b) => b.classList.remove("active"));
           button.classList.add("active");
           state.horizonYear = Number(button.dataset.horizon);
-          draw();
+          resetZoom();
         });
       });
 
-      els.wrap.addEventListener("mousemove", (event) => {
-        const rect = els.wrap.getBoundingClientRect();
-        state.hover = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      els.resetZoom.addEventListener("click", resetZoom);
+
+      els.canvas.addEventListener("wheel", (event) => {
+        const point = chartPoint(event);
+        if (!event.ctrlKey || !point.inside) return;
+        event.preventDefault();
+        if (state.drag) return;
+        const view = state.viewport || fullViewport();
+        const full = fullViewport();
+        const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? els.wrap.clientHeight : 1);
+        const span = Math.max(MIN_VIEW_SPAN, Math.min(full.end - full.start,
+          (view.end - view.start) * Math.exp(Math.max(-1, Math.min(1, delta * 0.002)))));
+        const fraction = (point.x - CHART_PAD.l) / point.width;
+        const anchor = view.start + fraction * (view.end - view.start);
+        setViewport(anchor - fraction * span, anchor + (1 - fraction) * span);
+      }, { passive: false });
+
+      els.canvas.addEventListener("pointerdown", (event) => {
+        const point = chartPoint(event);
+        if (event.pointerType !== "mouse" || event.button !== 0 || !point.inside || !state.viewport) return;
+        event.preventDefault();
+        state.drag = { id: event.pointerId, x: event.clientX, width: point.width, ...state.viewport };
+        els.canvas.setPointerCapture(event.pointerId);
+        clearHover();
         draw();
       });
 
-      els.wrap.addEventListener("mouseleave", () => {
-        state.hover = null;
-        els.tooltip.classList.remove("visible");
+      els.canvas.addEventListener("pointermove", (event) => {
+        if (event.pointerType !== "mouse") return;
+        const point = chartPoint(event);
+        if (state.drag && event.pointerId === state.drag.id) {
+          if (!(event.buttons & 1)) { endPan(); return; }
+          const shift = (event.clientX - state.drag.x) / state.drag.width * (state.drag.end - state.drag.start);
+          setViewport(state.drag.start - shift, state.drag.end - shift);
+          return;
+        }
+        if (point.inside) state.hover = { x: point.x, y: point.y };
+        else clearHover();
         draw();
       });
 
-      window.addEventListener("resize", draw);
+      els.canvas.addEventListener("pointerleave", () => {
+        clearHover();
+        draw();
+      });
+      for (const event of ["pointerup", "pointercancel", "lostpointercapture"]) els.canvas.addEventListener(event, endPan);
+      window.addEventListener("blur", endPan);
+      window.addEventListener("resize", () => { endPan(); clearHover(); draw(); });
 
       els.refreshData.addEventListener("click", async () => {
         els.refreshData.disabled = true;
